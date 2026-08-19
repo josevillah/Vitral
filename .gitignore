@@ -8,11 +8,10 @@
 !.vitral/boceto.json
 !.vitral/plomo/
 
-# Carpeta de pruebas: tiene su propio repositorio git dentro.
-pruebas/
+# Los escenarios que checks.mjs se monta y se borra solo. El script si se versiona.
+pruebas/.tmp-checks/
 
 node_modules/
-pruebas/
 
 # Salidas sueltas de pruebas manuales.
 seco.txt

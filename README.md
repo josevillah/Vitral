@@ -300,6 +300,18 @@ entrada: parsea banderas, arma el plan, delega y decide el codigo de salida.
 | `src/guardarrailes.mjs` | Comprobaciones previas: devuelven veredictos, no abortan |
 | `src/corrida.mjs` | Ejecuta las olas, y el ensayo de `--seco` |
 | `src/errores.mjs` | `ErrorVitral`, para los fallos de forma |
+| `pruebas/checks.mjs` | Los checks de regresion. Monta sus propios escenarios y los borra |
+
+Antes de dar por bueno un cambio en el motor:
+
+```
+node pruebas/checks.mjs
+```
+
+Doce comprobaciones, cero dependencias, sale con 0 o con 1. Cada una monta su
+propio repositorio temporal con el boceto de `ejemplo/` dentro, asi que el
+resultado no depende de en que rama estes ni de lo que quedara de una corrida
+anterior. Ninguna lanza agentes de verdad.
 
 El contrato completo esta en **`.vitral/plomo/motor.md`**: que exporta cada
 modulo, con que firma, y que no le corresponde. Ese archivo es el plomo del
