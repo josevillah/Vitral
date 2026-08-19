@@ -359,6 +359,38 @@ siempre pertenece a un modulo de `src/`.
 
 ## Como trabajar sobre el motor en paralelo
 
+### Donde va cada cosa
+
+Deducir a que modulo pertenece un cambio es donde mas se falla. Los casos que se
+dan de verdad:
+
+| Si te piden | Donde va |
+|---|---|
+| Cambiar el texto, el color o el formato de un mensaje | `salida.mjs`, y nada mas |
+| Anadir una bandera al CLI | `vitral.mjs` la parsea y la usa; `salida.mjs` si sale en la ayuda |
+| Anadir un agente | `agentes.mjs`, y nada mas. Antes, corre su `--help` y una prueba real |
+| Cambiar lo que se le dice al agente en el prompt | `prompt.mjs`, y nada mas |
+| Cambiar el bloque `## Handoff` que se le pide | `prompt.mjs`: la instruccion y `extraerHandoff` se cambian juntas o dejan de encajar |
+| Cambiar lo que dice la marca de corte incompleto | `registro.mjs` |
+| Cambiar donde o con que nombre se guarda algo en `.vitral/` | `registro.mjs`, y nada mas |
+| Anadir un campo al boceto | `boceto.mjs` lo valida, y quien lo consuma: `agentes.mjs` si acaba en un flag, `proceso.mjs` si cambia como se lanza, `prompt.mjs` si el agente lo lee |
+| Cambiar que aborta y que solo avisa | `guardarrailes.mjs`. Solo toca `vitral.mjs` si cambia el orden en que se resuelven |
+| Cambiar que cuenta como solape o como "fuera de ruta" | `rutas.mjs` la regla, `guardarrailes.mjs` el juicio |
+| Cambiar como se agrupan las olas | `olas.mjs` |
+| Cambiar que se salta con `--solo` | `vitral.mjs`: decidir que se ejecuta es parte de armar el plan |
+| Cambiar como se lanza o se mata un proceso, o el timeout | `proceso.mjs` |
+| Cambiar la cadencia o el momento del latido | `corrida.mjs` decide cuando, `salida.mjs` como se ve |
+| Anadir un dato al resumen final | `git.mjs` si hay que calcularlo, `salida.mjs` como se ve, `vitral.mjs` los une |
+
+Dos senales de que te equivocaste de modulo:
+
+- **Necesitas imprimir desde tu modulo.** Entonces el cambio no es tuyo: el dato
+  sale de aqui y la linea la pinta `salida.mjs`.
+- **Necesitas importar hacia arriba en el grafo.** Entonces el dato deberia
+  llegarte por parametro, no ir a buscarlo tu.
+
+### Reparto del trabajo
+
 - Una tarea por modulo. Las rutas del boceto se declaran por archivo:
   `src/prompt.mjs`, no `src/`.
 - Si tu cambio obliga a tocar dos modulos, no lo repartas entre dos agentes:
