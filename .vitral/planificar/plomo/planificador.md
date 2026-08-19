@@ -1,5 +1,10 @@
 # Contrato del planificador
 
+**Como se invoca:** en una sesion interactiva normal, pasandole este archivo. No
+se lanza con el motor y por eso no vive en `.vitral/plomo/`: Vitral corre agentes
+headless —prompt por stdin, nadie al otro lado— y este necesita conversar. Un
+boceto que lo lanzara prometeria una corrida imposible.
+
 Este es el contrato de un agente que no escribe producto: escribe planes. Habla
 con una persona, entiende que se quiere construir, y al final de esa conversacion
 deja escritos el boceto y los plomos de una tanda.
