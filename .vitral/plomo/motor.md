@@ -389,6 +389,47 @@ Dos senales de que te equivocaste de modulo:
 - **Necesitas importar hacia arriba en el grafo.** Entonces el dato deberia
   llegarte por parametro, no ir a buscarlo tu.
 
+### Escribir el plomo de una tanda
+
+Esto no va del motor, va de como se escriben los contratos que lo cambian. Sale
+de la primera tanda de agentes sobre el propio Vitral, la del historial: **los
+tres fallos que encontro la revision fueron del plomo, ninguno de los agentes.**
+
+- Un `.gitignore` que el plomo daba por puesto y nadie habia puesto.
+- Un ejemplo de salida con dos formatos de duracion distintos en la misma pagina,
+  y un recuento de tareas que contradecia la regla escrita tres parrafos antes.
+- Un caso de borde, `--historial 0`, que el plomo no cubria y cada agente
+  resolvio a su manera.
+
+Tres agentes trabajando a ciegas no se compensan entre ellos: si el contrato
+dice algo raro, los tres lo copian igual de raro. El plomo es el unico punto
+donde un error se multiplica por el numero de vidrios.
+
+De ahi tres reglas:
+
+**Los ejemplos de un plomo son contrato, no ilustracion.** El agente no los lee
+para hacerse una idea: los copia. Si el ejemplo pone `0m 12s` donde la funcion
+produce `12s`, el agente escribe codigo que produce `0m 12s`, y hace bien, porque
+el plomo manda sobre lo que le parezca.
+
+**Un ejemplo escrito a mano que no salga del codigo real es una fuente de
+desviaciones.** En cuanto el ejemplo muestre algo que ya produce una funcion
+—una duracion, un coste, una fecha, una tabla alineada— generalo llamando a esa
+funcion y pega la salida literal, o copiala de una corrida de verdad. Escribir a
+mano lo que una funcion ya sabe escribir es inventarse un segundo formato que
+nadie mantiene. Si la funcion todavia no existe porque es parte de la tanda,
+escribe el ejemplo a mano, pero **vuelve a generarlo en cuanto exista** y
+sustituyelo: el plomo de hoy es el contrato de la tanda siguiente.
+
+**Repasa los bordes antes de dar el plomo por bueno.** Cero, vacio, ausente,
+negativo, uno solo, mas de los que caben. Un caso que el plomo no cubre no lo
+deja "abierto": lo deja a la interpretacion de tres agentes que no pueden
+hablarse, y cada uno elige distinto.
+
+Y una cosa que el plomo debe decir siempre, aunque parezca obvia: **que archivos
+no toca nadie en esta tanda.** Sin esa lista, lo que un agente da por hecho que
+alguien mas hara, no lo hace nadie.
+
 ### Reparto del trabajo
 
 - Una tarea por modulo. Las rutas del boceto se declaran por archivo:

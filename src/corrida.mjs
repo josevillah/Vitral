@@ -56,13 +56,18 @@ export async function ejecutarOlas(plan) {
   const ancho = Math.max(...ejecutan.map((t) => t.id.length));
   let costoTotal = 0;
 
+  // Todas las tareas que llegaron a ejecutarse, en el orden en que terminaron.
+  // Las fallidas son solo la cola de esto: el registro de la corrida necesita
+  // tambien lo que costaron y cuantos turnos dieron las que fueron bien.
+  const resultados = [];
+
   for (const [indice, ola] of olas.entries()) {
     salida.cabeceraOla(indice, olas.length, ola.length);
     for (const tarea of ola) salida.lineaArranque(tarea, ancho);
 
     const latido = abrirLatido(ancho);
 
-    const resultados = await Promise.all(ola.map(async (tarea) => {
+    const deLaOla = await Promise.all(ola.map(async (tarea) => {
       const prompt = promptDe(tarea, plan);
 
       latido.empieza(tarea.id);
@@ -97,15 +102,16 @@ export async function ejecutarOlas(plan) {
       costoTotal += resultado.costo || 0;
       salida.lineaCierre({ tarea, ancho, resultado, huboHandoff: Boolean(handoff), rutaMarca, raiz });
 
+      resultados.push({ tarea, resultado });
       return { tarea, resultado };
     }));
 
     latido.cerrar();
     salida.finOla();
 
-    const fallidas = resultados.filter(({ resultado }) => !resultado.ok);
-    if (fallidas.length > 0) return { costoTotal, fallidas, ola: indice };
+    const fallidas = deLaOla.filter(({ resultado }) => !resultado.ok);
+    if (fallidas.length > 0) return { costoTotal, fallidas, ola: indice, resultados };
   }
 
-  return { costoTotal, fallidas: [], ola: null };
+  return { costoTotal, fallidas: [], ola: null, resultados };
 }

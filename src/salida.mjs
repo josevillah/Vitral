@@ -60,6 +60,9 @@ const AYUDA = `vitral · orquestador de agentes en paralelo
   node vitral.mjs --solo <id> --rehacer   reejecuta tambien las dependencias
   node vitral.mjs --boceto <archivo> usa otro boceto
   node vitral.mjs --sin-git          corre sin repositorio git (peligroso)
+  node vitral.mjs --historial        las ultimas 10 corridas
+  node vitral.mjs --historial <n>    las ultimas <n>
+  node vitral.mjs --historial <id>   el detalle de esa corrida
 
 el plomo se lee de <directorio del boceto>/plomo/*.md
 la salida cruda queda en .vitral/logs/ y los handoffs en .vitral/handoffs/`;
@@ -213,5 +216,141 @@ export function resumen({ costoTotal, ms, repo, diff, sinRastrear, fuera }) {
              `fuera de lo declarado${C.fin}`);
     for (const archivo of fuera) imprimir(`    ${C.amarillo}${archivo}${C.fin}`);
   }
+  imprimir('');
+}
+
+// ---------------------------------------------------------------------------
+// Historial
+// ---------------------------------------------------------------------------
+//
+// Las tres funciones de aqui reciben corridas ya leidas de disco: no abren el
+// historial ni saben donde vive (eso es de registro.mjs). Lo unico que calculan
+// es la suma del costo de lo que se les pasa y el ancho de las columnas.
+
+const ANCHO_ESTADO = 'FALLO'.length;
+
+// El relleno va sobre el texto plano: los codigos de color no ocupan columnas
+// en pantalla pero si cuentan en .length, y desalinearian la tabla entera.
+function estadoTenido(ok) {
+  const texto = (ok ? 'ok' : 'FALLO').padEnd(ANCHO_ESTADO);
+  return `${ok ? C.verde : C.rojo}${texto}${C.fin}`;
+}
+
+const anchoDe = (textos) => textos.reduce((max, texto) => Math.max(max, texto.length), 0);
+
+const cuenta = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+
+// Una fecha que no parsee no tumba la tabla: se queda en blanco y se alinea igual.
+function fechaDeCorrida(iso) {
+  const fecha = new Date(iso);
+  return Number.isNaN(fecha.getTime()) ? '' : fechaCorta(fecha);
+}
+
+export function listaHistorial(corridas) {
+  const total = corridas.reduce((suma, corrida) => suma + (corrida.costo || 0), 0);
+
+  const filas = corridas.map((corrida) => ({
+    id: corrida.id || '',
+    fecha: fechaDeCorrida(corrida.fecha),
+    nombre: corrida.nombre || '',
+    tareas: cuenta((corrida.tareas || []).length, 'tarea', 'tareas'),
+    ok: Boolean(corrida.ok),
+    duracion: formatearDuracion(corrida.duracionMs || 0),
+    costo: formatearCosto(corrida.costo),
+  }));
+
+  const anchoId = anchoDe(filas.map((fila) => fila.id));
+  const anchoNombre = anchoDe(filas.map((fila) => fila.nombre));
+  const anchoTareas = anchoDe(filas.map((fila) => fila.tareas));
+  const anchoDuracion = anchoDe(filas.map((fila) => fila.duracion));
+
+  imprimir('');
+  imprimir(`${C.fuerte}historial${C.fin} · ` +
+           `${cuenta(corridas.length, 'corrida', 'corridas')} · ${formatearCosto(total)}`);
+  imprimir('');
+  for (const fila of filas) {
+    imprimir(`  ${fila.id.padEnd(anchoId)}  ${C.tenue}${fila.fecha}${C.fin}  ` +
+             `${fila.nombre.padEnd(anchoNombre)}  ` +
+             `${C.tenue}${fila.tareas.padEnd(anchoTareas)}${C.fin}  ` +
+             `${estadoTenido(fila.ok)}  ` +
+             `${C.tenue}${fila.duracion.padEnd(anchoDuracion)}  ${fila.costo}${C.fin}`);
+  }
+  imprimir('');
+}
+
+export function detalleCorrida(corrida) {
+  const eti = (texto) => `  ${texto.padEnd(14)}`;
+  const tareas = corrida.tareas || [];
+  const banderas = corrida.banderas || {};
+  const cambios = corrida.cambios || { archivos: [], sinRastrear: 0, fueraDeRuta: [] };
+  const saltadas = corrida.saltadas || [];
+
+  const puestas = [];
+  if (banderas.solo) puestas.push(`--solo ${banderas.solo}`);
+  if (banderas.rehacer) puestas.push('--rehacer');
+  if (banderas.sinGit) puestas.push('--sin-git');
+
+  imprimir('');
+  imprimir(`${C.fuerte}corrida ${corrida.id}${C.fin}`);
+  imprimir(`${eti('fecha')}${C.tenue}${fechaDeCorrida(corrida.fecha)}${C.fin}`);
+  imprimir(`${eti('boceto')}${C.tenue}${corrida.boceto} · ${corrida.nombre}${C.fin}`);
+  imprimir(`${eti('rama')}${C.tenue}${corrida.rama || 'sin git'}${C.fin}`);
+  imprimir(`${eti('banderas')}${C.tenue}${puestas.length > 0 ? puestas.join(' ') : 'ninguna'}${C.fin}`);
+  imprimir(`${eti('olas')}${C.tenue}${(corrida.olas || []).join(' -> ')}${C.fin}`);
+  imprimir(`${eti('estado')}${estadoTenido(Boolean(corrida.ok))}  ` +
+           `${C.tenue}${formatearDuracion(corrida.duracionMs || 0)}  ` +
+           `${formatearCosto(corrida.costo)}${C.fin}`);
+
+  imprimir('');
+  imprimir(`  ${C.fuerte}tareas${C.fin}`);
+
+  const filas = tareas.map((tarea) => ({
+    id: tarea.id || '',
+    agente: tarea.agente || '',
+    ok: Boolean(tarea.ok),
+    duracion: formatearDuracion(tarea.ms || 0),
+    costo: formatearCosto(tarea.costo),
+    turnos: tarea.turnos == null ? '' : String(tarea.turnos),
+    error: tarea.ok ? null : tarea.error,
+  }));
+
+  const anchoId = anchoDe(filas.map((fila) => fila.id));
+  const anchoAgente = anchoDe(filas.map((fila) => fila.agente));
+  const anchoDuracion = anchoDe(filas.map((fila) => fila.duracion));
+  const anchoCosto = anchoDe(filas.map((fila) => fila.costo));
+  const anchoTurnos = anchoDe(filas.map((fila) => fila.turnos));
+
+  for (const fila of filas) {
+    const extras = [fila.duracion.padEnd(anchoDuracion), fila.costo.padEnd(anchoCosto)];
+    if (fila.turnos) extras.push(`${fila.turnos.padStart(anchoTurnos)} turnos`);
+    imprimir(`    ${fila.id.padEnd(anchoId)}  ${C.tenue}${fila.agente.padEnd(anchoAgente)}${C.fin}  ` +
+             `${estadoTenido(fila.ok)}  ${C.tenue}${extras.join('  ')}${C.fin}`);
+    // El error se sangra hasta la columna del agente, para que se lea colgando
+    // de la tarea a la que pertenece y no de la lista.
+    if (fila.error) {
+      imprimir(`${' '.repeat(6 + anchoId)}${C.rojo}${fila.error}${C.fin}`);
+    }
+  }
+
+  imprimir('');
+  imprimir(`${eti('saltadas')}${C.tenue}${saltadas.length > 0 ? saltadas.join(', ') : 'ninguna'}${C.fin}`);
+  imprimir(`${eti('cambios')}${C.tenue}` +
+           `${cuenta((cambios.archivos || []).length, 'archivo', 'archivos')}, ` +
+           `${cambios.sinRastrear || 0} sin rastrear${C.fin}`);
+
+  const fuera = cambios.fueraDeRuta || [];
+  if (fuera.length === 0) {
+    imprimir(`${eti('fuera de ruta')}${C.tenue}nada${C.fin}`);
+  } else {
+    imprimir(`${eti('fuera de ruta')}${C.amarillo}${fuera.join(', ')}${C.fin}`);
+  }
+  imprimir('');
+}
+
+export function historialVacio() {
+  imprimir('');
+  imprimir(`${C.fuerte}historial${C.fin} · todavia no hay ninguna corrida guardada`);
+  imprimir(`${C.tenue}se guarda una entrada cada vez que termina una corrida real, ` +
+           `no en --seco${C.fin}`);
   imprimir('');
 }

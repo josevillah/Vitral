@@ -6,7 +6,7 @@
 //
 // No imprime y no decide: recibe resultados ya cerrados y los guarda.
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync, unlinkSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { AGENTES } from './agentes.mjs';
@@ -17,6 +17,7 @@ const dirLogs = (raiz) => path.join(raiz, '.vitral', 'logs');
 const dirHandoffs = (raiz) => path.join(raiz, '.vitral', 'handoffs');
 const rutaHandoff = (raiz, id) => path.join(dirHandoffs(raiz), `${id}.md`);
 const rutaMarca = (raiz, id) => path.join(dirHandoffs(raiz), `${id}.INCOMPLETO.md`);
+const rutaHistorial = (raiz) => path.join(raiz, '.vitral', 'historial.jsonl');
 
 export function prepararRegistro(raiz) {
   mkdirSync(dirLogs(raiz), { recursive: true });
@@ -149,4 +150,91 @@ Antes de relanzar con \`--solo ${tarea.id}\`:
 Este archivo se borra solo cuando "${tarea.id}" termine bien y deje handoff de verdad.
 `);
   return archivo;
+}
+
+// ---------------------------------------------------------------------------
+// El historial de corridas.
+//
+// Los logs de arriba son por tarea y se pisan en cada corrida: sirven para
+// depurar *una* tarea. El historial es lo contrario: acumula un resumen por
+// corrida y no borra nada, para poder responder que costo esto, que tarea se
+// desboca y que cambio entre ayer y hoy.
+//
+// Es JSONL —un objeto por linea— porque se escribe anadiendo al final: una
+// corrida interrumpida a la mitad deja una linea rota, pero no puede llevarse
+// las anteriores. Ese es el trato, y el precio es que al leer hay que saltarse
+// en silencio las lineas que no parseen.
+
+const dosDigitos = (n) => String(n).padStart(2, '0');
+
+// AAAAMMDD-HHMMSS en hora local: el id se lee de un vistazo y ordena solo.
+const sellarId = (fecha) =>
+  `${fecha.getFullYear()}${dosDigitos(fecha.getMonth() + 1)}${dosDigitos(fecha.getDate())}`
+  + `-${dosDigitos(fecha.getHours())}${dosDigitos(fecha.getMinutes())}${dosDigitos(fecha.getSeconds())}`;
+
+// Las lineas del archivo ya parseadas, de la mas antigua a la mas reciente. Lo
+// que no parsee se cae aqui y no molesta a nadie mas.
+function leerLineas(raiz) {
+  const archivo = rutaHistorial(raiz);
+  if (!existsSync(archivo)) return [];
+
+  const corridas = [];
+  for (const linea of readFileSync(archivo, 'utf8').split('\n')) {
+    if (!linea.trim()) continue;
+    try {
+      const corrida = JSON.parse(linea);
+      if (corrida && typeof corrida === 'object') corridas.push(corrida);
+    } catch {
+      // Linea a medias de una corrida que se corto mientras escribia.
+    }
+  }
+  return corridas;
+}
+
+// El sello lo pone el registro, no quien llama: la corrida llega sin `id` ni
+// `fecha`. Se fecha en el arranque, no en el cierre, porque es lo que identifica
+// a la corrida para quien la busque despues; se reconstruye restando lo que
+// duro, que es el unico dato del arranque que llega hasta aqui.
+export function guardarCorrida(raiz, corrida) {
+  const arranque = Number.isFinite(corrida?.duracionMs)
+    ? new Date(Date.now() - corrida.duracionMs)
+    : new Date();
+  const id = sellarId(arranque);
+
+  const entrada = { id, fecha: arranque.toISOString(), ...corrida };
+  entrada.id = id;
+  entrada.fecha = arranque.toISOString();
+
+  const archivo = rutaHistorial(raiz);
+  mkdirSync(path.dirname(archivo), { recursive: true });
+  appendFileSync(archivo, `${saltoPendiente(archivo)}${JSON.stringify(entrada)}\n`);
+  return id;
+}
+
+// Si la corrida anterior murio a media linea, el archivo se quedo sin su salto
+// final. Anadir sin mas pegaria las dos lineas y perderia tambien la vieja, que
+// si estaba entera. Un salto de mas no rompe nada: al leer, las lineas vacias se
+// ignoran igual que las rotas.
+function saltoPendiente(archivo) {
+  if (!existsSync(archivo)) return '';
+  const bytes = statSync(archivo).size;
+  if (bytes === 0) return '';
+  const ultimo = readFileSync(archivo, 'utf8').slice(-1);
+  return ultimo === '\n' ? '' : '\n';
+}
+
+// Las ultimas `limite` corridas, la mas reciente primero.
+export function leerHistorial(raiz, limite = 10) {
+  if (!(limite > 0)) return [];
+  return leerLineas(raiz).slice(-limite).reverse();
+}
+
+// La corrida con ese id, o null. Dos corridas del mismo segundo comparten id: se
+// devuelve la mas reciente, que es la ultima escrita.
+export function leerCorrida(raiz, id) {
+  const corridas = leerLineas(raiz);
+  for (let i = corridas.length - 1; i >= 0; i--) {
+    if (corridas[i].id === id) return corridas[i];
+  }
+  return null;
 }

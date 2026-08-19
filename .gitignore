@@ -1,6 +1,7 @@
 # Lo que produce cada corrida. Artefactos: no se versionan.
 .vitral/logs/
 .vitral/handoffs/
+.vitral/historial.jsonl
 
 # El boceto y el plomo SI se versionan: son el plan y el contrato, no artefactos.
 # (No estan ignorados arriba; esto queda escrito para que nadie los anada por error.)

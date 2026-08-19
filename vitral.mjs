@@ -19,16 +19,26 @@ import { ErrorVitral } from './src/errores.mjs';
 import * as git from './src/git.mjs';
 import * as guardarrailes from './src/guardarrailes.mjs';
 import { calcularOlas, cerrarDependencias } from './src/olas.mjs';
-import { cargarHandoffs, prepararRegistro } from './src/registro.mjs';
+import {
+  cargarHandoffs, guardarCorrida, leerCorrida, leerHistorial, prepararRegistro,
+} from './src/registro.mjs';
 import { dentroDe, rutasDeclaradas } from './src/rutas.mjs';
 import * as salida from './src/salida.mjs';
 
 function parsearBanderas(argv) {
   const banderas = { seco: false, solo: null, boceto: null, sinGit: false,
-                     rehacer: false, ayuda: false };
+                     rehacer: false, ayuda: false,
+                     historial: false, historialArg: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--seco') banderas.seco = true;
+    // --historial lleva argumento opcional: si lo siguiente es otra bandera, o
+    // no hay nada, se pide la lista por defecto.
+    else if (arg === '--historial') {
+      banderas.historial = true;
+      const siguiente = argv[i + 1];
+      if (siguiente !== undefined && !siguiente.startsWith('--')) banderas.historialArg = argv[++i];
+    }
     else if (arg === '--sin-git') banderas.sinGit = true;
     else if (arg === '--rehacer') banderas.rehacer = true;
     else if (arg === '--solo') banderas.solo = argv[++i];
@@ -42,6 +52,66 @@ function parsearBanderas(argv) {
   if (banderas.solo === undefined) throw new ErrorVitral('--solo necesita un id de tarea.');
   if (banderas.boceto === undefined) throw new ErrorVitral('--boceto necesita una ruta de archivo.');
   return banderas;
+}
+
+// --historial es una consulta, no una corrida: no lee el boceto, no comprueba la
+// rama y no escribe nada. Un argumento de solo digitos es "cuantas corridas
+// quiero"; cualquier otra cosa es un id, que siempre lleva guion.
+function consultarHistorial(raiz, arg) {
+  if (arg !== null && !/^\d+$/.test(arg)) {
+    // "encontrada" y no "corrida": aqui arriba `corrida` es el modulo del motor.
+    const encontrada = leerCorrida(raiz, arg);
+    if (!encontrada) {
+      throw new ErrorVitral(`no hay ninguna corrida con id "${arg}".`,
+        'listalas con --historial');
+    }
+    salida.detalleCorrida(encontrada);
+    return 0;
+  }
+
+  const corridas = leerHistorial(raiz, arg === null ? 10 : Number(arg));
+  if (corridas.length === 0) salida.historialVacio();
+  else salida.listaHistorial(corridas);
+  return 0;
+}
+
+// Lo que queda escrito de una corrida que ya termino, bien o mal. Se arma aqui
+// porque es el unico sitio que ve las dos mitades: lo que devolvio el motor y lo
+// que dice git del arbol de trabajo. El id y la fecha los sella el registro.
+function registroDeCorrida(
+  { rutaBoceto, boceto, rama, banderas, olas, saltadas },
+  { costoTotal, fallidas, resultados, duracionMs, cambios, fuera },
+) {
+  return {
+    boceto: rutaBoceto,
+    nombre: boceto.nombre,
+    rama,
+    banderas: { solo: banderas.solo, rehacer: banderas.rehacer, sinGit: banderas.sinGit },
+    ok: fallidas.length === 0,
+    duracionMs,
+    costo: costoTotal,
+    olas: olas.map((ola) => ola.length),
+    tareas: resultados.map(({ tarea, resultado }) => ({
+      id: tarea.id,
+      agente: tarea.agente,
+      modelo: tarea.modelo || null,
+      ok: Boolean(resultado.ok),
+      ms: resultado.ms,
+      costo: resultado.costo || 0,
+      turnos: resultado.turnos ?? null,
+      motivo: resultado.motivo || null,
+      error: resultado.error || null,
+      // Cuantas hubo basta: el detalle ya esta en el log de la tarea.
+      denegaciones: (resultado.denegaciones || []).length,
+      sesion: resultado.sesion || null,
+    })),
+    saltadas: saltadas.map((tarea) => tarea.id),
+    cambios: {
+      archivos: cambios.tocados,
+      sinRastrear: cambios.sinRastrear.length,
+      fueraDeRuta: fuera,
+    },
+  };
 }
 
 // Imprime lo que dijeron las comprobaciones y responde si alguna impide lanzar.
@@ -58,6 +128,8 @@ async function principal() {
   if (banderas.ayuda) { salida.imprimirAyuda(); return 0; }
 
   const raiz = process.cwd();
+  if (banderas.historial) return consultarHistorial(raiz, banderas.historialArg);
+
   const rutaBoceto = banderas.boceto || path.join('.vitral', 'boceto.json');
 
   const repo = git.hayGit(raiz);
@@ -111,21 +183,35 @@ async function principal() {
   const estadoAntes = repo ? git.estadoGit(raiz) : new Set();
   const arranque = Date.now();
 
-  const { costoTotal, fallidas, ola } = await corrida.ejecutarOlas(plan);
+  const { costoTotal, fallidas, ola, resultados } = await corrida.ejecutarOlas(plan);
+  const duracionMs = Date.now() - arranque;
+
+  // Se le pregunta a git antes de decidir nada, tambien cuando la corrida fallo:
+  // esa es justo la que mas interesa consultar despues, y sin esto el historial
+  // no sabria que archivos quedaron tocados a medias. La corrida fallida no
+  // imprime resumen, solo lo guarda.
+  const cambios = repo ? git.cambiosDesde(raiz, estadoAntes) : { tocados: [], sinRastrear: [] };
+  const declaradas = rutasDeclaradas(ejecutan, raiz);
+  const fuera = cambios.tocados.filter((archivo) => !dentroDe(archivo, declaradas));
+  const diff = repo ? git.diffStat(raiz) : null;
+
+  guardarCorrida(raiz, registroDeCorrida(
+    { rutaBoceto, boceto, rama, banderas, olas, saltadas },
+    { costoTotal, fallidas, resultados, duracionMs, cambios, fuera },
+  ));
+
   if (fallidas.length > 0) {
     salida.avisoFallo(fallidas, ola);
     return 1;
   }
 
-  const cambios = repo ? git.cambiosDesde(raiz, estadoAntes) : { tocados: [], sinRastrear: [] };
-  const declaradas = rutasDeclaradas(ejecutan, raiz);
   salida.resumen({
     costoTotal,
-    ms: Date.now() - arranque,
+    ms: duracionMs,
     repo,
-    diff: repo ? git.diffStat(raiz) : null,
+    diff,
     sinRastrear: cambios.sinRastrear,
-    fuera: cambios.tocados.filter((archivo) => !dentroDe(archivo, declaradas)),
+    fuera,
   });
   return 0;
 }
