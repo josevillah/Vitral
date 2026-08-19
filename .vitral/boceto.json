@@ -1,0 +1,38 @@
+{
+  "nombre": "Historial de corridas",
+  "tareas": [
+    {
+      "id": "persistencia",
+      "agente": "claude",
+      "rutas": ["src/registro.mjs"],
+      "presupuesto": 3,
+      "timeout": 20,
+      "prompt": "Implementa en src/registro.mjs las tres funciones nuevas que fija el contrato del historial: guardarCorrida(raiz, corrida), leerHistorial(raiz, limite = 10) y leerCorrida(raiz, id). El id y la fecha los sella guardarCorrida, no quien la llama. El archivo es .vitral/historial.jsonl, se escribe anadiendo una linea al final, se crea si no existe, y al leerlo una linea que no parsee se ignora en silencio. Respeta la disposicion de rutas que ya usa el modulo: define la ruta del historial junto a las de logs y handoffs, con el mismo estilo, porque este es el unico modulo que sabe donde vive nada dentro de .vitral/. No cambies ninguna funcion que ya existe en el modulo ni su firma: corrida.mjs y vitral.mjs las estan usando ahora mismo. No imprimas nada por pantalla, ni siquiera para depurar: salida.mjs es el unico que escribe."
+    },
+    {
+      "id": "presentacion",
+      "agente": "claude",
+      "rutas": ["src/salida.mjs"],
+      "presupuesto": 2,
+      "timeout": 20,
+      "prompt": "Implementa en src/salida.mjs las tres funciones nuevas que fija el contrato del historial: listaHistorial(corridas), detalleCorrida(corrida) e historialVacio(). Sigue el formato exacto que da el contrato, incluidas las lineas en blanco de arriba y abajo, la alineacion de las etiquetas a 14 y el ancho de la columna de ids. Reutiliza lo que ya hay en el modulo: la paleta C, el helper imprimir, formatearDuracion, formatearCosto y fechaCorta. No los redefinas ni te inventes colores nuevos. Anade --historial y sus dos variantes al texto de la ayuda. Las tres funciones reciben datos ya leidos: no abras el historial ni ningun otro archivo, no calcules nada que no sea sumar y dar formato a lo que recibes. Y sobre todo: no cambies ni una letra de lo que ya imprimian las funciones existentes, porque hay checks de regresion que comparan la salida entera byte a byte contra la version anterior."
+    },
+    {
+      "id": "entrada",
+      "agente": "claude",
+      "rutas": ["vitral.mjs", "src/corrida.mjs"],
+      "presupuesto": 3,
+      "timeout": 20,
+      "prompt": "Dos cosas. En src/corrida.mjs, anade el campo resultados al objeto que devuelve ejecutarOlas: un array plano de { tarea, resultado } con todas las tareas que se ejecutaron, no solo las fallidas. Los otros tres campos no cambian de forma ni de significado. En vitral.mjs, anade la bandera --historial con sus dos variantes segun el contrato: corta antes de los guardarrailes, en el mismo sitio donde hoy corta --ayuda, y distingue un numero de un id por si el argumento son solo digitos. Un id que no existe lanza ErrorVitral. Ademas, construye el registro de la corrida con la forma exacta del contrato y guardalo con guardarCorrida al terminar, tanto si la corrida fue bien como si fallo, y nunca en --seco: para poder guardarlo cuando falla vas a tener que calcular los cambios de git tambien en ese camino, pero sin imprimir el resumen. Las funciones de registro.mjs y de salida.mjs las estan escribiendo otros dos agentes ahora mismo: no las implementes tu ni las dupliques, llamalas por las firmas del contrato. Lo mas importante: una corrida normal no puede decir ni una palabra nueva en pantalla, porque hay checks que comparan la salida byte a byte."
+    },
+    {
+      "id": "revision",
+      "agente": "claude",
+      "necesita": ["persistencia", "presentacion", "entrada"],
+      "rutas": ["vitral.mjs", "src/corrida.mjs", "src/registro.mjs", "src/salida.mjs"],
+      "presupuesto": 8,
+      "timeout": 25,
+      "prompt": "Los tres lados ya estan escritos. Revisa que encajen de verdad. Lee primero los handoffs de arriba, sobre todo lo que cada uno anoto en 'Me desvie'. Comprueba, en este orden: que las firmas que llama vitral.mjs son exactamente las que exportan registro.mjs y salida.mjs, en nombre, numero y orden de argumentos; que el objeto que construye vitral.mjs tiene los mismos campos con los mismos nombres que los que lee salida.mjs para pintarlos, campo por campo, incluidos los anidados de tareas y cambios; que lo que escribe guardarCorrida es lo que leen leerHistorial y leerCorrida; y que nadie ha roto las tres invariantes de motor.md, es decir que solo salida.mjs escribe en pantalla, que solo vitral.mjs llama a process.exit y que ningun modulo importa hacia arriba en el grafo. Verifica que funciona: corre node --check en los cuatro archivos, y despues node vitral.mjs --ayuda, node vitral.mjs --historial y node vitral.mjs --seco. Nunca lances una corrida real de vitral, es decir node vitral.mjs sin banderas: lanzaria agentes de verdad. Corrige las diferencias pequenas que encuentres, como un nombre de campo que no cuadra o un argumento de mas. Si el desacuerdo es de fondo, no elijas tu: dejalo escrito en tu handoff y di cual de los tres lados se aparto del contrato."
+    }
+  ]
+}

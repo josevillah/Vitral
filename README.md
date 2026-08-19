@@ -280,6 +280,54 @@ el log queda todo lo que alcanzo a emitir; si matas a claude, no queda nada.
 asi que `presupuesto` no le aplica: se ignora y vitral lo avisa al arrancar. Su
 unico freno es el `timeout`.
 
+## Estructura del codigo
+
+El motor esta en `src/`, un modulo por responsabilidad. `vitral.mjs` es solo la
+entrada: parsea banderas, arma el plan, delega y decide el codigo de salida.
+
+| Archivo | Que hace |
+|---|---|
+| `vitral.mjs` | Entrada. El unico que llama a `process.exit` |
+| `src/salida.mjs` | Todo lo que ve el usuario. El unico que escribe en pantalla |
+| `src/boceto.mjs` | Leer y validar el boceto y el plomo |
+| `src/olas.mjs` | Orden topologico y cierre de dependencias |
+| `src/rutas.mjs` | Rutas declaradas: normalizar, solapar, contener |
+| `src/git.mjs` | Consultas a git. Solo lee, nunca escribe |
+| `src/agentes.mjs` | Adaptadores: los flags y el formato de salida de cada CLI |
+| `src/proceso.mjs` | Lanzar un agente, alimentarlo por stdin, matarlo si se pasa de tiempo |
+| `src/prompt.mjs` | El texto que recibe el agente y el handoff que devuelve |
+| `src/registro.mjs` | Lo que queda escrito en `.vitral/`: logs, handoffs, marcas |
+| `src/guardarrailes.mjs` | Comprobaciones previas: devuelven veredictos, no abortan |
+| `src/corrida.mjs` | Ejecuta las olas, y el ensayo de `--seco` |
+| `src/errores.mjs` | `ErrorVitral`, para los fallos de forma |
+| `pruebas/checks.mjs` | Los checks de regresion. Monta sus propios escenarios y los borra |
+
+Antes de dar por bueno un cambio en el motor:
+
+```
+node pruebas/checks.mjs
+```
+
+Doce comprobaciones, cero dependencias, sale con 0 o con 1. Cada una monta su
+propio repositorio temporal con el boceto de `ejemplo/` dentro, asi que el
+resultado no depende de en que rama estes ni de lo que quedara de una corrida
+anterior. Ninguna lanza agentes de verdad.
+
+El contrato completo esta en **`.vitral/plomo/motor.md`**: que exporta cada
+modulo, con que firma, y que no le corresponde. Ese archivo es el plomo del
+propio Vitral, para cuando varios agentes trabajen sobre el motor a la vez.
+
+Tres invariantes que no se rompen sin acuerdo previo:
+
+1. **Solo `salida.mjs` escribe en pantalla.** Ningun otro modulo usa `console` ni
+   `process.stdout`. Cuando haya interfaz grafica, portar la salida sera tocar un
+   archivo en vez de diez.
+2. **Solo `vitral.mjs` llama a `process.exit`.** Los guardarrailes devuelven
+   veredictos (`{ nivel: 'aborta' | 'avisa', mensaje, sugerencia }`) y los errores
+   de forma lanzan `ErrorVitral`. Asi se puede preguntar "¿esto es seguro?" sin
+   morirse en el intento.
+3. **Las dependencias van en una direccion.** Sin ciclos.
+
 ## Limitaciones
 
 Cosas que conviene saber antes de confiar en esto.
