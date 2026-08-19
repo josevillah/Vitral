@@ -1,0 +1,217 @@
+// Todo lo que ve el usuario se escribe aqui, y solo aqui.
+//
+// INVARIANTE: este es el unico modulo que toca process.stdout o process.stderr.
+// Ningun otro modulo del motor imprime, ni usa console. Los demas calculan y
+// devuelven datos; esta capa decide como se ven. Ver .vitral/plomo/motor.md.
+//
+// Este modulo no decide nada: no aborta, no llama a process.exit, no mira el
+// disco. Recibe datos ya calculados y los pinta.
+
+import path from 'node:path';
+
+const conColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+const C = conColor
+  ? { fin: '\x1b[0m', fuerte: '\x1b[1m', tenue: '\x1b[2m', rojo: '\x1b[31m',
+      verde: '\x1b[32m', amarillo: '\x1b[33m', cian: '\x1b[36m' }
+  : { fin: '', fuerte: '', tenue: '', rojo: '', verde: '', amarillo: '', cian: '' };
+
+const imprimir = (texto = '') => process.stdout.write(texto + '\n');
+
+// ---------------------------------------------------------------------------
+// Formato
+// ---------------------------------------------------------------------------
+
+export function formatearDuracion(ms) {
+  const segundos = Math.round(ms / 1000);
+  if (segundos < 60) return `${segundos}s`;
+  return `${Math.floor(segundos / 60)}m ${String(segundos % 60).padStart(2, '0')}s`;
+}
+
+export const formatearCosto = (usd) => `$${(usd || 0).toFixed(4)}`;
+
+// Fecha corta y local, para decir de cuando es un handoff sin llenar la linea.
+function fechaCorta(fecha) {
+  const dd = String(fecha.getDate()).padStart(2, '0');
+  const mm = String(fecha.getMonth() + 1).padStart(2, '0');
+  const hh = String(fecha.getHours()).padStart(2, '0');
+  const mi = String(fecha.getMinutes()).padStart(2, '0');
+  return `${dd}-${mm} ${hh}:${mi}`;
+}
+
+// ---------------------------------------------------------------------------
+// Mensajes sueltos
+// ---------------------------------------------------------------------------
+
+export function imprimirError(mensaje, sugerencia) {
+  process.stderr.write(`${C.rojo}vitral: ${mensaje}${C.fin}\n`);
+  if (sugerencia) process.stderr.write(`        ${C.tenue}${sugerencia}${C.fin}\n`);
+}
+
+export function imprimirAviso(mensaje) {
+  imprimir(`${C.amarillo}aviso: ${mensaje}${C.fin}`);
+}
+
+const AYUDA = `vitral · orquestador de agentes en paralelo
+
+  node vitral.mjs                    corre .vitral/boceto.json
+  node vitral.mjs --seco             imprime los prompts sin ejecutar nada
+  node vitral.mjs --solo <id>        corre una tarea, saltando las dependencias
+                                     que ya tienen handoff en disco
+  node vitral.mjs --solo <id> --rehacer   reejecuta tambien las dependencias
+  node vitral.mjs --boceto <archivo> usa otro boceto
+  node vitral.mjs --sin-git          corre sin repositorio git (peligroso)
+
+el plomo se lee de <directorio del boceto>/plomo/*.md
+la salida cruda queda en .vitral/logs/ y los handoffs en .vitral/handoffs/`;
+
+export function imprimirAyuda() {
+  imprimir(AYUDA);
+}
+
+// ---------------------------------------------------------------------------
+// Cabecera de la corrida
+// ---------------------------------------------------------------------------
+
+export function cabecera({ nombre, rutaBoceto, rama, plomo, olas, solo }) {
+  const pesoPlomo = Buffer.byteLength(plomo.texto, 'utf8');
+  const cuentaPlomo = plomo.archivos.length === 1
+    ? '1 archivo'
+    : `${plomo.archivos.length} archivos`;
+
+  imprimir('');
+  imprimir(`${C.fuerte}vitral${C.fin} · ${nombre}`);
+  imprimir(`${C.tenue}boceto ${rutaBoceto} · rama ${rama || 'sin git'} · ` +
+           `plomo ${cuentaPlomo} (${(pesoPlomo / 1024).toFixed(1)} KB) · ` +
+           `olas ${olas.map((ola) => ola.length).join(' -> ')}${C.fin}`);
+
+  if (!solo) return;
+  const cuenta = [`${solo.ejecutan} ${solo.ejecutan === 1 ? 'tarea' : 'tareas'}`];
+  if (solo.saltadas > 0) {
+    cuenta.push(`${solo.saltadas} ${solo.saltadas === 1 ? 'saltada' : 'saltadas'} ` +
+                '(handoff en disco)');
+  }
+  if (solo.rehacer) cuenta.push('--rehacer: no se salta nada');
+  imprimir(`${C.tenue}--solo ${solo.id}: ${cuenta.join(', ')}${C.fin}`);
+}
+
+// Cierra la cabecera y lista lo que no se va a ejecutar. La linea en blanco sale
+// siempre; la de despues, solo si hubo algo que saltar.
+export function lineasSaltadas(saltadas, ancho, fechas) {
+  imprimir('');
+  for (const tarea of saltadas) {
+    imprimir(`  ${C.tenue}~${C.fin} ${tarea.id.padEnd(ancho)}  ${C.cian}saltada${C.fin}  ` +
+             `${C.tenue}handoff del ${fechaCorta(fechas.get(tarea.id))}${C.fin}`);
+  }
+  if (saltadas.length > 0) imprimir('');
+}
+
+// ---------------------------------------------------------------------------
+// Ensayo en seco
+// ---------------------------------------------------------------------------
+
+export function imprimirPrompt(indice, tarea, prompt) {
+  imprimir(`${C.cian}${'='.repeat(78)}${C.fin}`);
+  imprimir(`${C.cian}prompt · ola ${indice + 1} · ${tarea.id} · agente ${tarea.agente}` +
+           ` · ${Buffer.byteLength(prompt, 'utf8')} bytes${C.fin}`);
+  imprimir(`${C.cian}${'='.repeat(78)}${C.fin}`);
+  imprimir('');
+  imprimir(prompt);
+  imprimir('');
+}
+
+export function finEnsayo() {
+  imprimir(`${C.tenue}modo seco: no se ejecuto nada.${C.fin}`);
+  imprimir('');
+}
+
+// ---------------------------------------------------------------------------
+// Corrida
+// ---------------------------------------------------------------------------
+
+export function cabeceraOla(indice, total, cuantos) {
+  imprimir(`${C.fuerte}ola ${indice + 1}/${total}${C.fin}${C.tenue} · ` +
+           `${cuantos === 1 ? '1 vidrio' : `${cuantos} vidrios en paralelo`}${C.fin}`);
+}
+
+export function lineaArranque(tarea, ancho) {
+  imprimir(`  ${C.tenue}->${C.fin} ${tarea.id.padEnd(ancho)}  ` +
+           `${C.tenue}${tarea.agente}  ${tarea.rutas.join(', ')}${C.fin}`);
+}
+
+export function lineaLatido(id, ancho, ms) {
+  imprimir(`  ${C.tenue}·  ${id.padEnd(ancho)}  en curso  ${formatearDuracion(ms)}${C.fin}`);
+}
+
+export function lineaCierre({ tarea, ancho, resultado, huboHandoff, rutaMarca, raiz }) {
+  const etiqueta = resultado.ok ? `${C.verde}ok${C.fin}` : `${C.rojo}FALLO${C.fin}`;
+  const extras = [formatearDuracion(resultado.ms), formatearCosto(resultado.costo)];
+  if (resultado.turnos != null) extras.push(`${resultado.turnos} turnos`);
+  if (resultado.denegaciones && resultado.denegaciones.length > 0) {
+    extras.push(`${C.amarillo}${resultado.denegaciones.length} permisos denegados${C.fin}`);
+  }
+  if (resultado.ok && !huboHandoff) extras.push(`${C.amarillo}sin bloque Handoff${C.fin}`);
+
+  imprimir(`  ${C.tenue}<-${C.fin} ${tarea.id.padEnd(ancho)}  ${etiqueta}  ` +
+           `${C.tenue}${extras.join('  ')}${C.fin}`);
+  if (!resultado.ok) imprimir(`     ${C.rojo}${resultado.error}${C.fin}`);
+  if (rutaMarca) {
+    imprimir(`     ${C.tenue}rastro en ` +
+             `${path.relative(raiz, rutaMarca).split(path.sep).join('/')}${C.fin}`);
+  }
+}
+
+export function finOla() {
+  imprimir('');
+}
+
+export function avisoFallo(fallidas, indice) {
+  const ids = fallidas.map(({ tarea }) => `"${tarea.id}"`).join(', ');
+  const logs = fallidas
+    .map(({ tarea }) => path.join('.vitral', 'logs', `${tarea.id}.json`))
+    .join(', ');
+  process.stderr.write(`${C.rojo}vitral: fallo ${ids} en la ola ${indice + 1}. ` +
+    `Me detengo aqui: las olas siguientes no se ejecutan.${C.fin}\n`);
+  process.stderr.write(`        ${C.tenue}el detalle esta en ${logs}${C.fin}\n`);
+  process.stderr.write(`        ${C.tenue}lo que ya escribieron los otros vidrios sigue ` +
+    `en el arbol de trabajo${C.fin}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Resumen
+// ---------------------------------------------------------------------------
+
+export function resumen({ costoTotal, ms, repo, diff, sinRastrear, fuera }) {
+  imprimir(`${C.fuerte}resumen${C.fin}`);
+  imprimir(`  ${'costo total'.padEnd(14)}${formatearCosto(costoTotal)}` +
+           `${C.tenue}  en ${formatearDuracion(ms)}${C.fin}`);
+
+  if (!repo) {
+    imprimir(`  ${'cambios'.padEnd(14)}${C.tenue}sin git: no puedo decirte que cambio${C.fin}`);
+    imprimir('');
+    return;
+  }
+
+  if (diff) {
+    imprimir(`  ${'cambios'.padEnd(14)}`);
+    for (const linea of diff.split('\n')) imprimir(`    ${C.tenue}${linea.trim()}${C.fin}`);
+  } else {
+    imprimir(`  ${'cambios'.padEnd(14)}${C.tenue}ningun archivo rastreado modificado${C.fin}`);
+  }
+
+  if (sinRastrear.length > 0) {
+    imprimir(`  ${'nuevos'.padEnd(14)}${C.tenue}${sinRastrear.length} archivo(s) sin rastrear${C.fin}`);
+    for (const archivo of sinRastrear.slice(0, 10)) imprimir(`    ${C.tenue}${archivo}${C.fin}`);
+    if (sinRastrear.length > 10) {
+      imprimir(`    ${C.tenue}y ${sinRastrear.length - 10} mas${C.fin}`);
+    }
+  }
+
+  if (fuera.length === 0) {
+    imprimir(`  ${'fuera de ruta'.padEnd(14)}${C.tenue}nada${C.fin}`);
+  } else {
+    imprimir(`  ${'fuera de ruta'.padEnd(14)}${C.amarillo}${fuera.length} archivo(s) ` +
+             `fuera de lo declarado${C.fin}`);
+    for (const archivo of fuera) imprimir(`    ${C.amarillo}${archivo}${C.fin}`);
+  }
+  imprimir('');
+}
