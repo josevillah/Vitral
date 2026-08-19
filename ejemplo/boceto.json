@@ -4,23 +4,34 @@
     {
       "id": "backend",
       "agente": "claude",
-      "rutas": ["app/Controllers/", "app/Models/"],
+      "rutas": [
+        "app/Controllers/",
+        "app/Models/"
+      ],
       "presupuesto": 3,
       "prompt": "Implementa el endpoint de cambio de estado de un pedido tal como lo fija el contrato: la ruta, el metodo, el cuerpo que acepta y las dos formas de respuesta (exito y error). Crea o ajusta el controlador y el modelo. Valida que la transicion de estado pedida este permitida por la maquina de estados del contrato y devuelve TRANSICION_INVALIDA cuando no lo este. No toques vistas ni JavaScript: hay otro agente en eso ahora mismo."
     },
     {
       "id": "frontend",
       "agente": "claude",
-      "rutas": ["app/Views/", "public/assets/js/"],
+      "rutas": [
+        "app/Views/",
+        "public/assets/js/"
+      ],
       "presupuesto": 3,
       "prompt": "Implementa la interfaz de cambio de estado de un pedido: el selector de estado nuevo y el boton que dispara el cambio. Llama al endpoint tal como lo fija el contrato y maneja las dos respuestas, incluyendo el codigo de error TRANSICION_INVALIDA, que debe mostrarse al usuario con el mensaje que venga en el campo mensaje. El endpoint todavia no existe: programalo igual contra el contrato, no lo inventes ni lo simules con datos falsos."
     },
     {
       "id": "revision",
       "agente": "claude",
-      "necesita": ["backend", "frontend"],
-      "rutas": ["app/"],
-      "presupuesto": 2,
+      "necesita": [
+        "backend",
+        "frontend"
+      ],
+      "rutas": [
+        "app/"
+      ],
+      "presupuesto": 6,
       "prompt": "Los dos lados ya estan escritos. Revisa que encajen: mismo nombre de campo en el cuerpo de la peticion, mismo nombre de campo en la respuesta, mismos codigos de error, misma ruta. Lee los handoffs de arriba antes de revisar el codigo, sobre todo lo que cada uno anoto en 'Me desvie'. Corrige las diferencias pequenas que encuentres. Si el desacuerdo es de fondo, no elijas tu: dejalo escrito en tu handoff y di cual de los dos lados se aparto del contrato."
     }
   ]
