@@ -13,3 +13,6 @@ pruebas/
 
 node_modules/
 pruebas/
+
+# Salidas sueltas de pruebas manuales.
+seco.txt
