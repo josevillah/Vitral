@@ -28,12 +28,127 @@ repositorio como codigo.
 `.gitignore` —aunque el plan lo necesite: eso se anota como pendiente para la
 persona, porque es justo el tipo de cosa que un plomo da por hecha y nadie hace.
 
+Escribir incluye mover y borrar: al cerrar una tanda, retirar el plomo y borrar el
+boceto y sus handoffs cae dentro de ese mismo permiso y del mismo directorio.
+
 **No ejecuta la corrida.** La prepara y la deja lista. Quien decide gastar es la
 persona, despues de leer lo que se escribio.
+
+**No usa git.** Ni rama, ni commit, ni merge, ni al abrir una tanda ni al cerrarla.
+Puede leer el historial para orientarse —de ahi sale media pagina de este contrato—
+pero escribir en el es de la persona. Es la misma linea que con la corrida: prepara,
+no ejecuta.
 
 **No decide la arquitectura.** Propone, pregunta y escribe. El plomo garantiza que
 las piezas encajen; no garantiza que el producto tenga sentido. Eso sigue siendo
 trabajo humano y conviene decirlo en voz alta durante la sesion.
+
+---
+
+## El ciclo de una tanda
+
+Una tanda no termina cuando terminan los agentes. Tiene tres momentos, y el
+planificador participa en el primero y en el tercero. El segundo es de la persona.
+
+| Momento | Rama | Que cambia en disco |
+|---|---|---|
+| **Abrir** | `feat/<tanda>` | Se escriben `.vitral/boceto.json` y `.vitral/plomo/<tanda>.md` |
+| **Ejecutar y verificar** | la misma `feat/<tanda>` | Lo que escriban los agentes. Se verifica y se mergea a `main` |
+| **Cerrar** | `chore/retirar-<tanda>` | El plomo se mueve a `.vitral/plomo/retirados/`, y se borran el boceto y los handoffs de la tanda |
+
+**Los nombres de rama son normativos.** No es capricho: en `git log` distinguen de un
+vistazo que commit hizo trabajo y cual solo limpio. Salen del historial real, no de
+una preferencia:
+
+```
+368e585  merge chore/retirar-preambulo:  Fast-forward
+4228a74  merge feat/preambulo:           Fast-forward
+b720598  merge chore/retirar-plomo:      Fast-forward
+a08357d  merge feat/validar-boceto:      Fast-forward
+```
+
+Y un cierre bien hecho es exactamente esto, sin nada mas:
+
+```
+D    .vitral/boceto.json
+R100 .vitral/plomo/<tanda>.md -> .vitral/plomo/retirados/<tanda>.md
+```
+
+`R100` es renombrado al cien por cien: el contrato se mueve **sin tocar una letra**.
+Retirar no es reescribir ni resumir. Lo que decia sigue diciendo, en otro sitio.
+
+### Por que existe el cierre
+
+Tres motivos, y ninguno es orden ni limpieza estetica.
+
+**Un plomo que se queda lo paga cada vidrio de cada tanda siguiente.** `leerPlomo`,
+en `src/boceto.mjs`, hace `readdirSync` del directorio del plomo, filtra por `.md` y
+mete todos en el prompt de **todas** las tareas. Sin recursion: un subdirectorio no
+acaba en `.md`, y por eso `retirados/` es un directorio y no un prefijo en el nombre.
+
+**Un boceto que se queda se puede relanzar por accidente.** `node vitral.mjs` sin
+banderas abre `.vitral/boceto.json` y lo ejecuta tal cual, aunque su plomo ya se haya
+movido a `retirados/`: entonces los agentes corren con el contrato ausente y el prompt
+no lo dice.
+
+**Un handoff huerfano puede acabar en un prompt donde no le corresponde.** Este es el
+menos evidente y el mas feo. Los ids se repiten entre tandas —`documentacion` y
+`checks` han aparecido en dos— y `cargarHandoffs` los busca por id, sin saber de que
+tanda son. Con `--solo`, las dependencias que tienen handoff en disco **se saltan**, y
+su contenido se inyecta en el prompt del dependiente como si fuera trabajo de esta
+tanda. Un handoff viejo no estorba: miente.
+
+**Los logs no se borran.** `.vitral/logs/<id>.json` son de solo escritura, nadie los
+lee para decidir nada, y la corrida siguiente que use ese id los pisa. Se quedan.
+
+### Que hace cada uno al cerrar
+
+| Quien | Que |
+|---|---|
+| La persona | Crea la rama `chore/retirar-<tanda>` **antes** de que se toque nada |
+| El planificador | Mueve el plomo a `retirados/`, borra el boceto, borra los handoffs de los ids de la tanda |
+| La persona | Revisa, commitea y mergea |
+
+El planificador mueve con un movimiento de archivo normal, no con `git mv`: git
+detecta el renombrado solo al preparar el commit, y asi el planificador no toca git.
+
+### Contrato de tanda y contrato permanente
+
+No todo plomo se retira, y lo que decide no es la intencion sino dos preguntas
+independientes.
+
+**¿Quien lo necesita?** Decide **donde vive**.
+
+| Publico | Donde | Ejemplo |
+|---|---|---|
+| Todas las tandas de la linea principal | `.vitral/plomo/` | `motor.md` |
+| Solo las tandas de un subsistema | Su propio directorio, con su propio boceto | `.vitral/ui/plomo/panel-pty.md` |
+| Una sola tanda | `.vitral/plomo/`, y se retira al cerrar | `validar-campos.md`, `preambulo.md` |
+
+**¿Sigue haciendo falta al cerrar?** Decide **si se retira**. La prueba practica es
+una sola pregunta: *¿la tanda siguiente sobre esto parte de este documento?* Si la
+respuesta es si, es permanente, y entonces **se corrige en sitio** cuando la realidad
+lo desmiente, en vez de retirarse. Si es no, se retira entero.
+
+`panel-pty.md` es el caso vivo: la tanda de la cuadricula arranca de el, asi que
+cuando ConPTY desmintio un parrafo suyo, se corrigio ahi mismo y no se abrio un plomo
+nuevo que lo contradijera.
+
+**Ojo con la conclusion facil:** "permanente" no significa "fuera del directorio
+automatico". `motor.md` es permanente y vive en `.vitral/plomo/`, pagandose en cada
+prompt, a proposito, porque toda tanda del motor lo necesita. Lo que saca a un
+contrato de ahi no es durar, es tener **publico estrecho**.
+
+Y de ahi sale, sin necesidad de recordar ninguna costumbre, por que `.vitral/ui/` no
+se retira nunca: como su boceto vive en `.vitral/ui/boceto.json`, su plomo se lee de
+`.vitral/ui/plomo/` —el directorio sale de `path.dirname(rutaBoceto)`— y las tandas de
+la linea principal no lo ven jamas. Nadie mas lo paga. Su boceto tampoco es peligroso:
+para ejecutarlo hay que escribir `--boceto` a mano, asi que no se relanza por
+accidente.
+
+Montar un subsistema asi cuesta una cosa y hay que decirla: **la persona tiene que
+acordarse del `--boceto` en cada corrida**, y `node vitral.mjs` a secas nunca lo va a
+tocar.
 
 ---
 
@@ -110,7 +225,10 @@ Fase propia, no un vistazo al final. Esta abajo, en su seccion.
 Con los contratos cerrados, el boceto es mecanico. Campos reales y sus reglas,
 mas abajo.
 
-### 6. Cierre
+### 6. Cierre de la sesion
+
+Es el cierre de la **conversacion**, no el de la tanda: la tanda se cierra despues,
+cuando ya se ejecuto y se mergeo, y tiene su propia sesion mas abajo.
 
 Dos frases que hay que decir siempre, aunque la persona ya las sepa:
 
@@ -123,9 +241,54 @@ Dos frases que hay que decir siempre, aunque la persona ya las sepa:
 Y un aviso mas, si la persona esta en `main` o `master`: la corrida real va a
 abortar. Es deliberado.
 
+Y lo tercero, que es lo que mas se olvida porque pasa dias despues: **dejar escrito
+el pendiente del cierre**, con los nombres ya rellenados, no en abstracto. El
+planificador no va a estar delante cuando la tanda termine, asi que lo deja dicho
+ahora:
+
+```
+Cuando esto este mergeado en main, la tanda se cierra en chore/retirar-<tanda>:
+retirar .vitral/plomo/<tanda>.md a retirados/, borrar .vitral/boceto.json y
+borrar los handoffs de <ids de la tanda>.
+```
+
+Si en la tanda entra ademas un contrato permanente, o algo que el planificador no
+puede tocar —`.gitignore`, `README.md`, una herramienta que instalar—, va en esa
+misma lista de pendientes.
+
 ---
 
-## Lo que hay que preguntar antes de cerrar nada
+## La sesion de cierre
+
+Es la otra sesion, y no se parece en nada a la de apertura: no hay entrevista, no hay
+descomposicion y no se escribe ningun contrato. Hay una lista de comprobacion.
+
+Se invoca cuando una tanda ya se ejecuto, se verifico y se mergeo a `main`. Antes no:
+retirar el plomo de una tanda que todavia puede necesitar otra corrida deja al
+siguiente vidrio sin contrato.
+
+1. **Confirmar que la tanda esta cerrada de verdad.** Que se mergeo y que nadie
+   espera otra corrida. Se puede mirar el historial; si hay duda, se pregunta.
+2. **Mirar que hay en `.vitral/plomo/` y separar.** Por cada `.md` del primer nivel,
+   la pregunta de la seccion del ciclo: *¿la tanda siguiente sobre esto parte de este
+   documento?* Lo permanente se queda. `motor.md` **no se retira nunca**.
+3. **Mover el plomo de la tanda** a `.vitral/plomo/retirados/`, tal cual, sin tocar
+   una letra.
+4. **Borrar `.vitral/boceto.json`**, despues de leerlo para apuntar los ids de sus
+   tareas, que hacen falta en el paso siguiente.
+5. **Borrar `.vitral/handoffs/<id>.md`** de esos ids, y tambien sus
+   `<id>.INCOMPLETO.md` si quedo alguno. Los logs no.
+6. **Decir que queda para la persona:** commitear en `chore/retirar-<tanda>` y
+   mergear. Y si el cierre revelo algo —un pendiente que nadie hizo, un contrato que
+   habria que promover a permanente—, decirlo aqui, que es la ultima oportunidad.
+
+Lo que **no** se toca en una sesion de cierre: `.vitral/plomo/retirados/LEEME.md`,
+cualquier subsistema con boceto propio como `.vitral/ui/`, y todo lo que este fuera de
+`.vitral/`.
+
+---
+
+## Lo que hay que preguntar antes de dar el plan por cerrado
 
 El corazon del trabajo. Estas preguntas no son un formulario: son los sitios por
 donde se han colado los fallos reales.
@@ -200,6 +363,13 @@ no `src/`. La comparacion de solapamiento es por segmento de ruta, asi que
 `src/registro.mjs` y `src/salida.mjs` conviven sin problema, pero `src/` choca con
 las dos. Declarar una carpeta le da al agente permiso para escribir en archivos
 que no son suyos, y el motor no lo va a impedir si esta declarado.
+
+**Un plomo que no se retira lo paga cada vidrio de cada tanda siguiente.** No es
+una molestia teorica: `preambulo.md` eran 12.972 bytes, y su propia tanda ya
+arrancaba con `plomo 2 archivos (33.1 KB)` en la cabecera de `--seco`, pagados tres
+veces, una por tarea. Sin retirarlo, esos 12.972 bytes los habria pagado tambien cada
+vidrio de la tanda siguiente, y de la siguiente, para contar una funcionalidad ya
+entregada. El cierre no es aseo: es la unica forma de que el coste no se acumule.
 
 ---
 
@@ -301,6 +471,8 @@ pero la tarea siguiente se queda sin lo que necesitaba leer.
 | Un tope por debajo de $0.25 | `--seco` avisa |
 | `presupuesto` en una tarea `opencode` | `--seco` avisa: se ignora |
 | Un plomo de una tanda vieja que sigue en `.vitral/plomo/` | La cabecera de `--seco` dice cuantos archivos de plomo hay y cuanto pesan |
+| Un boceto ya ejecutado que sigue en `.vitral/boceto.json` | Nadie lo detecta. `node vitral.mjs` sin banderas lo relanza tal cual, y si su plomo ya se movio, los agentes corren sin contrato y el prompt no lo dice |
+| Un handoff viejo de un id que se repite entre tandas | Nadie lo detecta. `--solo` se salta las dependencias que tienen handoff en disco sin mirar de que tanda son, e inyecta el contenido viejo en el prompt del dependiente |
 | El mismo dato explicado en dos prompts | Nadie lo detecta. Buscar el dato repetido: si esta en dos prompts, es plomo |
 | Un ejemplo del plomo escrito a mano | Nadie lo detecta. Generarlo llamando al codigo real y pegar la salida |
 | Un catalogo sin origen unico | Nadie lo detecta. Preguntarlo en la entrevista |
