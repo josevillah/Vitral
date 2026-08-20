@@ -281,6 +281,15 @@ necesita esperar, primero suelta el bloqueo.
 |---|---|---|
 | `panel:salida` | `{ id: String, datos: String }` | cada vez que el PTY escribe algo |
 | `panel:fin` | `{ id: String, codigo: u32 }` | una vez, cuando el proceso del panel termina |
+| `maquina:uso` | `{ cpu: f32, usada: u64, total: u64 }` | una vez por segundo. `cpu` en tanto por ciento, `usada` y `total` en bytes |
+| `paneles:ocupados` | `{ ids: Vec<String> }` | una vez por segundo. **La lista completa** de los paneles que estan ejecutando algo |
+
+`paneles:ocupados` manda el conjunto entero en cada latido, no las altas y bajas. El
+frontend sustituye su lista por la que llega y no lleva contabilidad propia: asi no hay
+transicion que se pueda perder ni estado que se desincronice.
+
+Los dos eventos nuevos los emite **un solo hilo temporizador** en Rust, no uno por
+metrica.
 
 `datos` en `panel:salida` es **base64**, no texto.
 
@@ -708,6 +717,195 @@ Se copian literales. Los checks futuros los van a comparar palabra por palabra.
 
 ---
 
+## La barra densa, el icono y el indicador
+
+Tres cosas que se decidieron juntas mirando una maqueta, y que comparten fila. Se
+escriben juntas porque compiten por el mismo ancho de 260 px.
+
+### La fila de un proyecto
+
+Pasa de `32px` a **`44px`** y lleva dos lineas. De izquierda a derecha:
+
+| Zona | Que |
+|---|---|
+| `0-3px` | La marca `activo-marca`, solo en la fila activa |
+| `16-38px` | El icono: cuadro de `22x22` |
+| resto | Linea 1: el nombre. Linea 2: la **ruta completa** en `texto-tenue` a `11px` |
+| derecha | El indicador de actividad, y a su derecha el contador de paneles |
+
+**La ruta completa deja de vivir en el `title`** y se ve siempre. Si no cabe, se corta
+con puntos suspensivos por la izquierda, que es donde esta lo generico: se prefiere
+perder `C:\Users\...` antes que el nombre de la carpeta.
+
+**El contador es el numero de paneles vivos de ese proyecto**, incluidos los ocultos.
+Aparece solo si es mayor que cero. Va en `activo-marca` en la fila activa y en
+`texto-tenue` en las demas.
+
+Esa ultima linea levanta una prohibicion que tenia el contrato, y conviene decir por
+que: decia *"no hay contador de paneles por proyecto, adelanta trabajo del modo
+corrida"*. Ese motivo era cierto cuando un proyecto no tenia paneles propios. **Caduco
+el dia que los paneles ocultos pasaron a sobrevivir al cambio de proyecto**: hoy se
+pueden dejar cuatro terminales corriendo en un proyecto, cambiar a otro, y no queda ni
+rastro. Eso no es adelantar el modo corrida, es esconder estado que la aplicacion ya
+tiene.
+
+### El icono
+
+Un cuadro de `22x22` con esquinas de `3px`, fondo `#c8bc98`, y **la inicial del nombre
+en mayuscula siempre**, en `#2e2b1c` a `11px` y peso `600`. La mayuscula es
+obligatoria aunque la carpeta se llame en minusculas: `vitral` da `V`.
+
+**Sale de la ruta, no del proyecto.** Es la unica forma en que un icono puede existir
+aqui: derivarlo del contenido —lenguaje, framework, tipo de repositorio— obliga a mirar
+dentro, y eso no se hace por ningun camino. Un icono asi **no entra ni disfrazado de
+mejora pequena**.
+
+**No lleva canto**, y esto es lo contrario de lo que pedia la variante de colores. El
+cuadro es claro, asi que sobre la fila activa oscura da `8.77` y destaca solo; donde va
+justo es sobre la barra clara, a `1.48`. Ahi el peso lo lleva la letra, que da `7.51`
+sobre el cuadro. Anadir canto en la fila activa solo mete ruido donde ya hay separacion.
+
+**Dos proyectos con la misma inicial llevan el mismo icono, y se acepta.** `vitral` y
+`vitral-ui` dan los dos `V`. Se eligio la letra unica por regularidad: en una lista
+larga, unos cuadros con una letra y otros con dos se ven desiguales. Quien distingue en
+ese caso es el nombre y la ruta, que estan al lado.
+
+### El indicador de actividad
+
+Cuatro cuadraditos de `6x6` con `2px` de separacion, formando un cuadrado de `14x14`.
+**El color viaja por el anillo** —arriba izquierda, arriba derecha, abajo derecha, abajo
+izquierda— y **alterna oliva y ambar**. Da sensacion de giro sin que nada gire.
+
+| Cosa | Valor |
+|---|---|
+| `ind-apagado` | `#b9ae90` |
+| `ind-oliva` | `#5c7a12` — posiciones arriba-izquierda y abajo-derecha |
+| `ind-ambar` | `#9a7b16` — posiciones arriba-derecha y abajo-izquierda |
+| Ciclo completo | `1.6s`, un cuadrado encendido cada `0.4s` |
+
+**El amarillo `#fde047` no se puede usar aqui, y esta medido:** da `1.03 : 1` sobre la
+barra clara, o sea invisible. Solo se veria en la fila activa, que es la unica oscura, y
+ahi ya hay dos acentos hablando. El ambar `#9a7b16` es ese mismo amarillo bajado hasta
+donde se ve sobre pergamino: `3.14` sobre la barra y `4.12` sobre la fila activa. El
+oliva `#5c7a12` da `3.86` y `3.36`.
+
+**El indicador aparece solo cuando el proyecto esta ejecutando algo, y desaparece
+entero cuando no.** No se queda apagado ocupando sitio: la mitad del trabajo de este
+indicador es que un proyecto parado se vea parado.
+
+---
+
+## Saber si un panel esta ejecutando algo
+
+**Vitral no sabe si un panel esta "trabajando", y no va a saberlo.** Un PowerShell con
+el prompt parado y uno compilando son iguales desde fuera. Lo que si se puede saber es
+si **hay un comando en marcha**, y eso es lo que mide esta senal. El nombre importa: en
+pantalla, en el codigo y en el handoff se dice **"ejecutando algo"**, nunca
+"trabajando".
+
+### Las dos mitades
+
+Un panel esta ejecutando algo si se cumple **cualquiera** de las dos:
+
+1. **Tiene un proceso hijo** que no sea el host de consola.
+2. **Ha escrito en el PTY** en el ultimo segundo.
+
+Cada mitad tapa el agujero de la otra, y las dos tienen agujeros medidos:
+
+- **La primera falla con los cmdlets que PowerShell ejecuta en proceso.** Comprobado:
+  un shell corriendo `Start-Sleep -Seconds 20` no tiene ningun hijo y se ve parado. Un
+  `Get-ChildItem -Recurse` sobre un arbol grande, igual — pero ese imprime, asi que lo
+  caza la segunda.
+- **La segunda falla con el trabajo silencioso.** Un `cargo build` enlazando o un agente
+  esperando una respuesta de red no escriben nada durante minutos — pero tienen hijo,
+  asi que los caza la primera.
+
+Lo que **ninguna de las dos caza** es un hijo colgado sin avanzar: sale como ejecutando.
+Con el nombre "ejecutando algo" eso no es mentira, y por eso el nombre es el que es.
+
+### Rust se queda con la senal entera
+
+**El frontend no calcula ninguna de las dos mitades.** El hilo lector ya sabe cuando
+llego el ultimo byte y el snapshot de procesos es de Rust, asi que Rust emite un
+booleano ya resuelto y el frontend solo lo pinta.
+
+No es reparto de comodidad: es lo que hace que la medicion de abajo **no bloquee al
+frontend**. Si el snapshot sale caro y hay que quedarse con la mitad 2, la forma del IPC
+no cambia ni una letra y el frontend ni se entera.
+
+### La medicion, que es una puerta
+
+**Antes de escribir la mitad 1 hay que medir cuanto cuesta un snapshot de procesos del
+sistema, y la funcion depende del resultado.**
+
+Medido ya, y por eso no se hace asi: preguntar por los hijos de **un** PID via WMI son
+**48 ms**. Con cuatro paneles, 190 ms por muestra — a 1 Hz eso es un 19% de un nucleo
+solo para esto, e inaceptable. La via correcta es **un unico snapshot del sistema** que
+da todos los padres de una pasada y sirve para los cuatro paneles a la vez.
+
+**El umbral es `20ms` por snapshot.** A 1 Hz eso es un 2% de un nucleo, que es lo que se
+esta dispuesto a pagar.
+
+- Si el snapshot cuesta **20 ms o menos**: entran las dos mitades.
+- Si cuesta **mas de 20 ms**: **se cae la mitad 1** y la senal pasa a ser solo la
+  escritura reciente. Se dice en el handoff con la cifra medida, y este archivo se
+  corrige para que el proximo no lo intente otra vez.
+
+No se busca un rodeo, no se muestrea mas despacio para colarlo, y no se mete igual "a
+ver que tal". La cifra manda.
+
+---
+
+## El uso de la maquina
+
+Una franja de estado al pie de la ventana, a todo el ancho, con **CPU y memoria de la
+maquina entera**. No por panel: atribuir procesos a un panel miente por debajo en cuanto
+un proceso se desprende del arbol, y lo que se quiere saber es que se esta comiendo la
+maquina.
+
+### La franja, superficie 4
+
+| Token | Valor | Contraste |
+|---|---|---|
+| `pie-fondo` | `#332c1c` | `1.41` contra la rejilla |
+| `pie-borde` | `#c8bc98` | `10.34` contra la rejilla. Es el mismo valor que `barra-borde` |
+| `pie-valor` | `#e0dac9` | `9.91` |
+| `pie-etiqueta` | `#a39c84` | `5.04` |
+
+Alto `28px`, relleno lateral `14px`, tipografia monoespaciada a `11px`, y un canto de
+`1px` arriba en `pie-borde`.
+
+**Se separa por color y por canto a la vez, a proposito.** La version anterior de la
+barra se apoyo solo en el canto y acabo a `1.01 : 1` de la rejilla, que es lo mismo que
+no existir. Aqui no se repite.
+
+### Que se muestrea y cada cuanto
+
+**Una muestra por segundo**, y **no se pausa al perder el foco**: mientras un agente
+corre vas a estar en otra ventana, y pausar justo entonces vacia de sentido la funcion.
+Solo se pausa con la ventana **minimizada**, que es cuando no hay nada que pintar.
+
+Medido en esta maquina: `\Processor(_Total)\% Processor Time` mas
+`\Memory\Available MBytes` cuestan **1 ms** por muestra. A 1 Hz, un `0,1%` de un nucleo.
+
+### La GPU no entra, y aqui esta la cifra
+
+| Contador | Coste por muestra |
+|---|---|
+| `\GPU Engine(*)\Utilization Percentage` — 361 instancias | `1.150 ms` |
+| `\GPU Adapter Memory(*)\Dedicated Usage` — **2** instancias | `1.544 ms` |
+
+**Lo que cierra el asunto es la segunda fila: dos instancias cuestan lo mismo que 361**,
+asi que el coste no es el volumen de datos sino el juego de contadores de GPU en si. Y
+Windows **no expone ningun contador agregado** de utilizacion: hay que sumar 361 valores
+para obtener un numero.
+
+La unica via barata seria NVML, que es solo NVIDIA, en una aplicacion que no sabe que
+tarjeta hay. **Queda fuera.** Si algun dia se quiere, es su propia tanda con su propia
+medicion, y empieza por desmentir estas cifras.
+
+---
+
 ## El frontend
 
 `ui/web/index.html` carga `vendor/xterm.css`, la barra lateral, un contenedor de rejilla
@@ -1039,8 +1237,13 @@ El boton va **debajo del texto**, separado `16px`, centrado con el.
   guarda para el modo corrida, que es cuando un panel tendra algo propio que decir.
 - **No hay icono por proyecto.** Ni de carpeta, ni de lenguaje, ni derivado del
   contenido: deducirlo obligaria a mirar dentro del proyecto, que es lo que no se hace.
-- **No hay contador de paneles por proyecto en la barra.** Es informacion de la rejilla,
-  y meterla en la lista adelanta trabajo del modo corrida sin que nadie lo haya pedido.
+- **El indicador de actividad no tiene estado apagado.** Cuando un proyecto no ejecuta
+  nada, el indicador **no esta**: no se queda en gris ocupando sitio. La mitad del
+  trabajo de ese indicador es que un proyecto parado se vea parado.
+- **El icono no lleva canto en la fila activa.** Medido: el cuadro claro ya da `8.77`
+  ahi. El canto solo anadiria ruido.
+- **Dos proyectos con la misma inicial comparten icono**, y se acepta a cambio de que
+  todos los cuadros tengan el mismo peso visual.
 - **La barra no se puede redimensionar arrastrando.** El ancho es `260px` y punto;
   arrastrar pide guardar la medida, y eso es una preferencia mas que nadie ha pedido.
 - **El boton del estado vacio no tiene estado hover propio declarado.** Es el unico
@@ -1117,6 +1320,11 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 | Llega un evento de otro id | Se ignora. Por eso se comprueba el id |
 | Se cierra la ventana con procesos vivos | Se matan todos. No queda ningun `powershell.exe` huerfano |
 | Se cierra la ventana con el panel ya muerto | El vigia ya borro la entrada; no hay nada que matar y no es un error |
+| Un proyecto sin paneles vivos | Sin contador y sin indicador. La fila lleva icono, nombre y ruta y nada mas |
+| El snapshot de procesos cuesta mas de 20 ms | Se cae la mitad 1 de la senal. `paneles:ocupados` sigue emitiendose, calculado solo con la escritura reciente |
+| Un panel muere mientras estaba ejecutando algo | El latido siguiente ya no lo trae en `ids` y el indicador desaparece. No hace falta ningun aviso aparte |
+| La ventana se minimiza | Se deja de muestrear y de emitir los dos eventos. Al restaurar se reanuda; el primer valor de CPU puede ser el de un intervalo largo |
+| Los contadores de rendimiento no se pueden abrir | `maquina:uso` no se emite y la franja muestra guiones en vez de cifras. No es un error que aborte nada |
 | `abrir_panel` con un `cwd` que no existe | `Err` **antes** de abrir el PTY. `portable-pty` no avisaria: arrancaria en el home |
 | Se desconecta el disco del proyecto activo | Sus paneles siguen vivos; la lista lo sigue dando por disponible hasta el proximo arranque o activacion. Abrir uno nuevo falla |
 | Se anade una ruta que ya esta en la lista | No se duplica. El estado vuelve sin cambios y no es un error |
@@ -1161,7 +1369,15 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 - Etiquetas o titulos por panel.
 - Nada que lea `.vitral/`. Ni el de la aplicacion ni el de ningun proyecto.
 - Lanzar el motor, y cualquier cosa del modo corrida.
-- Leer, indexar o enumerar el contenido de un proyecto, por ningun camino.
+- Leer, indexar o enumerar el contenido de un proyecto, por ningun camino. **Incluido
+  un icono derivado del lenguaje, el framework o el tipo de repositorio**, que es la
+  forma en que esto vuelve disfrazado de mejora pequena.
+- La rama de git en la barra. Leer `.git/HEAD` es leer dentro del proyecto; si algun
+  dia entra, entra con una decision explicita y no de rebote.
+- **La GPU.** Medido: `1.544 ms` por muestra y sin contador agregado en Windows. La
+  seccion del uso de la maquina lleva las cifras.
+- Metricas por panel. Atribuir un arbol de procesos a un panel miente por debajo en
+  cuanto algo se desprende del arbol.
 - Redimensionar la barra arrastrando, y guardar su ancho.
 - Reabrir los paneles que habia al arrancar. Se recuerda el proyecto activo, no sus paneles.
 - Ningun `package.json` ni `node_modules`.
@@ -1280,3 +1496,34 @@ proposito: es el unico que no compara la ventana con un texto, sino con un dibuj
 32. **`no-disponible` esta apagado, no invisible.** Va a `2.14 : 1` a proposito. Miralo
     en la ventana y decide: si no se lee que ahi hay un proyecto, el valor esta mal y se
     corrige en el contrato, no en el codigo.
+
+Y los de la tanda de la densidad. El 39 vuelve a ser el de comparar con el dibujo, y
+esta vez importa mas que nunca porque hay movimiento, que no se puede comprobar leyendo.
+
+33. **La franja de estado existe al pie**, a todo el ancho, y sus cifras cambian solas
+    sin tocar nada.
+34. **La CPU sube al compilar.** Lanza `cargo build` en un panel y mira la franja: si el
+    numero no se mueve, la muestra no esta llegando.
+35. **El indicador aparece al lanzar algo y desaparece al terminar.** Prueba con algo
+    largo y silencioso —`ping -n 20 127.0.0.1 > NUL`— que no imprime nada: tiene que
+    encenderse igual, porque lo caza la mitad del proceso hijo.
+36. **Y con algo que imprime y no tiene hijo:** `Get-ChildItem -Recurse C:\Windows`.
+    Tiene que encenderse por la otra mitad. Si uno de los dos casos falla, falta una
+    mitad de la senal.
+37. **Un proyecto oculto que esta ejecutando algo se ve en su fila**, con contador e
+    indicador, sin tener que activarlo. Es la razon de que se levantara la prohibicion
+    del contador.
+38. **Un proyecto parado no tiene indicador ninguno**, ni apagado ni en gris. Miralo al
+    lado de uno activo.
+39. **La ventana y la maqueta, las dos abiertas, tienen que verse igual.**
+
+    ```
+    start .vitral/maquetas/densidad/densidad.html
+    ```
+
+    Se compara la variante **D2 con iconos I2 y el indicador M3**. Lo que se busca no es
+    que coincidan los hexadecimales sino que produzca la misma impresion, y en
+    particular: **que los cuatro cuadrados a 44 px se lean como un indicador y no como
+    una mancha**, que es la duda que abrio esta ronda.
+40. **El icono es la inicial en mayuscula siempre**, aunque la carpeta se llame en
+    minusculas, y la ruta completa se lee en la segunda linea sin pasar el raton.
