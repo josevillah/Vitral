@@ -440,13 +440,20 @@ mas repetido al migrar y no da un mensaje util, solo `undefined`.
 
 ## `ui/src-tauri/capabilities/default.json`
 
-Declara `core:default` para la ventana `main`. Se eligio el conjunto por defecto y no
-un permiso suelto porque `listen` necesita al menos `core:event:default` y no hay forma
-de descubrir que mas falta sin arrancar la ventana: un permiso de menos es una ventana
-rota que hay que depurar a ciegas. Los cuatro comandos propios no necesitan permiso.
+Para la ventana `main`, y con exactamente estos permisos:
+
+| Permiso | Por que |
+|---|---|
+| `core:default` | El conjunto por defecto de Tauri. Se eligio entero y no un permiso suelto porque `listen` necesita al menos `core:event:default` y no hay forma de descubrir que mas hace falta sin arrancar la ventana: un permiso de menos es una ventana rota que hay que depurar a ciegas |
+| `core:window:allow-close` | Cerrar la ventana desde JavaScript, que es lo que hace `Ctrl+Shift+W` cuando solo queda un panel. **No** entra en `core:default`, y sin el la llamada falla con `window.close not allowed` |
+
+Los cuatro comandos propios de la aplicacion no necesitan permiso: las capabilities
+gobiernan los comandos de Tauri y de sus plugins, no los que declara uno.
 
 Si al arrancar sale un error de permiso denegado nombrando un comando, se anade **ese**
-permiso y solo ese.
+permiso y solo ese. Asi salio `core:window:allow-close`: la cuadricula lo destapo al
+probar el caso limite de cerrar el ultimo panel, el mensaje nombraba el permiso que
+faltaba, y se anadio ese. No se abrio la capability entera por comodidad.
 
 ---
 

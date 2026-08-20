@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "permisos de la ventana principal, que hoy solo contiene el panel",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-close"]
 }
