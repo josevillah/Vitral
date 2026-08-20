@@ -889,33 +889,91 @@ tenga el id de una tarea que mostrar, y eso es la tanda del modo corrida.
 
 Es contrato, no gusto personal: si no se escribe, cada agente elige otra cosa.
 
-Paleta **Vidriera**. Un vitral es vidrio de color separado por plomo: el fondo oscuro es
-el plomo, y el color solo aparece en lo que esta vivo.
+Paleta **Pergamino**. Un vitral es vidrio de color separado por plomo, y aqui el plomo
+es la barra: clara, opaca, y con un hueco oscuro por donde se ve el proyecto abierto.
+
+**La ventana tiene tres superficies, y la polaridad cambia entre ellas.** Esto no es un
+detalle: un color pensado para la barra clara no se lee en la rejilla oscura. Por eso los
+tokens van agrupados por superficie y **no se cruzan**.
+
+#### Superficie 1 · la barra, `#ece3c8`
 
 | Token | Valor | Donde |
 |---|---|---|
-| `barra-fondo` | `#0e0e0a` | fondo de la barra lateral |
-| `barra-borde` | `#262218` | divisor entre la barra y la rejilla |
-| `texto` | `#d0cbbd` | nombre de un proyecto |
-| `texto-tenue` | `#847c69` | texto secundario y estados vacios |
-| `hover-fondo` | `#17140c` | fila con el raton encima |
-| `activo-fondo` | `#201a0c` | fila del proyecto activo |
-| `activo-marca` | `#bef264` | barra vertical en el borde izquierdo de la fila activa |
+| `barra-fondo` | `#ece3c8` | fondo de la barra lateral |
+| `barra-borde` | `#c8bc98` | divisor entre la barra y la rejilla |
+| `texto` | `#2e2b1c` | nombre de un proyecto |
+| `texto-tenue` | `#665f4a` | la cabecera y el texto secundario **de la barra** |
+| `hover-fondo` | `#e2d8b8` | fila con el raton encima |
+| `no-disponible` | `#a39c84` | nombre de un proyecto cuya ruta no resuelve |
+| `error-barra` | `#a01c1c` | mensaje de error bajo la lista |
+
+#### Superficie 2 · la fila del proyecto activo, `#231e12`
+
+| Token | Valor | Donde |
+|---|---|---|
+| `activo-fondo` | `#231e12` | fondo de la fila activa, **oscuro dentro de la barra clara** |
 | `activo-texto` | `#fde047` | nombre del proyecto activo |
-| `no-disponible` | `#5a5347` | nombre de un proyecto cuya ruta no resuelve |
-| `error` | `#ef4444` | mensajes de error |
+| `activo-marca` | `#bef264` | barra vertical en el borde izquierdo de la fila activa |
 
-Contrastes medidos contra su propio fondo, no supuestos: texto 11.9, tenue 4.7, marca
-13.2, texto activo 13.1, error 5.1. **`no-disponible` se queda en 2.5 a proposito**: es
-el estado deshabilitado y tiene que verse apagado.
+**Esta fila es oscura a proposito, y el motivo no es de contraste.** Esta a `1.18 : 1` de
+la rejilla: es practicamente el mismo material. El proyecto activo no queda *resaltado*,
+queda **abierto** — su fila es un trozo del mismo negro que hay al otro lado, como si la
+barra tuviera un hueco por donde se ve el proyecto.
 
-**Los dos amarillos y el lima significan cosas distintas y no se intercambian:**
+Y tiene una consecuencia practica que es la razon de que se eligiera: **los dos acentos
+se quedan exactamente como estaban contratados.** Sobre pergamino, `#fde047` da
+`1.03 : 1` y seria invisible; sobre esta fila da `12.58`. La regla de abajo sobrevive sin
+tocar una letra.
+
+#### Superficie 3 · la rejilla, `#0c0c0c`
+
+| Token | Valor | Donde |
+|---|---|---|
+| `vacio-texto` | `#847c69` | el texto de los estados vacios |
+| `error-rejilla` | `#ef4444` | el texto de los estados vacios que son un error |
+| `boton-fondo` | `#241f13` | fondo del boton del estado vacio |
+| `boton-borde` | `#4a4128` | borde del boton |
+| `boton-texto` | `#e0dac9` | texto del boton |
+
+**`texto-tenue` y `error-barra` no se usan nunca aqui.** Dan `3.07` y `2.49` sobre la
+rejilla, por debajo del minimo. Son de la barra y solo de la barra. Es el error mas facil
+de cometer al implementar esto, porque los nombres se parecen.
+
+#### La regla de los acentos, intacta
 
 - **`#fde047` es "lo que esta activo ahora"**, en dos niveles: el nombre del proyecto
-  activo en la barra, y el borde del panel enfocado en la rejilla. Es el mismo amarillo
-  a proposito, y por eso el borde de foco dejo de ser azul.
+  activo en la barra y el borde del panel enfocado en la rejilla. **Es el mismo amarillo
+  a proposito**, y por eso la fila activa es oscura: para que pueda serlo.
 - **`#bef264` marca cual es el proyecto activo**, no donde esta el foco. Solo aparece en
   la barra, nunca en la rejilla.
+- **El boton no lleva ninguno de los dos.** La paleta no tiene color de accion, y los dos
+  acentos ya estan hablados: un boton amarillo diria que el boton esta activo, que es
+  falso. Por eso es neutro.
+
+#### Los contrastes, medidos
+
+Separacion, cada superficie contra la de al lado:
+
+| Par | Ratio |
+|---|---|
+| barra contra rejilla | **15.27** |
+| fila activa contra barra | 12.95 |
+| fila activa contra rejilla | 1.18 (a proposito: es el mismo material) |
+| divisor contra barra | 1.48 |
+| hover contra barra | 1.11 |
+| boton contra rejilla | 1.19 |
+| borde del boton contra rejilla | 1.94 |
+
+Legibilidad, cada texto sobre su fondo: `texto` 11.08 · `texto-tenue` 4.97 ·
+`error-barra` 6.12 · `activo-texto` 12.58 · `activo-marca` 12.70 · `vacio-texto` 4.72 ·
+`error-rejilla` 5.20 · `boton-texto` 14.01. **`no-disponible` se queda en 2.14 a
+proposito**: es el estado deshabilitado y tiene que verse apagado.
+
+**De donde sale el 15.27.** La version anterior de esta tabla ponia la barra en
+`#0e0e0a`, que da `1.01 : 1` contra la rejilla: no era poco contraste, era la misma
+superficie. Se aprobo leyendo hexadecimales y el fallo aparecio al abrir la ventana. Esta
+version se eligio mirando una maqueta. Ningun valor de aqui vuelve a fijarse sin dibujarlo.
 
 ### Medidas de la barra
 
@@ -929,9 +987,12 @@ el estado deshabilitado y tiene que verse apagado.
 | Escala de espaciado | `4 / 8 / 12 / 16 / 24`, y **nada fuera de ella** |
 | Tipografia | `'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif` |
 | Tamano de la lista | `13px` |
+| Boton del estado vacio | `15px`, relleno `12px 24px`, borde `1px`, esquinas `4px` |
 
 El terminal **no cambia de tipografia**: sigue en `'Cascadia Mono'` a `14`, como dice la
-tabla de arriba.
+tabla de arriba. Y **el divisor se queda** aunque con `15.27` de separacion ya no haga
+falta para separar: da un canto limpio donde la superficie clara toca la oscura, y sin el
+el borde parece un corte.
 
 La ruta completa **no ocupa linea**: va como atributo `title` de la fila, que el sistema
 muestra al detenerse encima. Un nombre que no cabe en `260px` se corta con puntos
@@ -943,9 +1004,9 @@ suspensivos.
 |---|---|
 | normal | `texto` sobre `barra-fondo`, sin marca |
 | hover | fondo `hover-fondo` |
-| activo | fondo `activo-fondo`, nombre en `activo-texto`, marca `activo-marca` a la izquierda |
+| activo | fondo `activo-fondo` —oscuro—, nombre en `activo-texto`, marca `activo-marca` a la izquierda |
 | no disponible | nombre en `no-disponible`, sin hover y sin cursor de mano |
-| error | el mensaje va en `error` debajo de la lista, **no** dentro de la fila |
+| error | el mensaje va en `error-barra` debajo de la lista, **no** dentro de la fila |
 
 **No hay estado de carga, y es deliberado.** Leer un JSON pequeno y comprobar que unos
 directorios existen es instantaneo; un indicador que nunca se ve es codigo muerto que
@@ -955,15 +1016,21 @@ entonces y con su tanda.
 ### Los estados vacios, que no son el mismo
 
 Se distinguen a proposito: caer del segundo en el primero, en silencio, esconde que algo
-se rompio. Textos literales, centrados en la zona de la rejilla:
+se rompio. Textos literales, centrados en la zona de la rejilla, **con los colores de la
+superficie 3**:
 
-| Cuando | Texto exacto | Color |
-|---|---|---|
-| La lista esta vacia | `Todavia no has abierto ningun proyecto.` | `texto-tenue` |
-| Hay proyectos pero ninguno activo | `Elige un proyecto de la lista.` | `texto-tenue` |
-| El ultimo activo ya no esta disponible | `El ultimo proyecto abierto ya no esta disponible.` | `error` |
-| Hay proyecto activo pero ningun panel | `Ctrl+Shift+N para abrir un panel.` | `texto-tenue` |
-| El archivo de estado no se pudo leer | `No se pudo leer la lista de proyectos. No se ha borrado nada.` | `error` |
+| Cuando | Texto exacto | Color | Boton |
+|---|---|---|---|
+| La lista esta vacia | `Todavia no has abierto ningun proyecto.` | `vacio-texto` | `Abrir un proyecto…` |
+| Hay proyectos pero ninguno activo | `Elige un proyecto de la lista.` | `vacio-texto` | **no** |
+| El ultimo activo ya no esta disponible | `El ultimo proyecto abierto ya no esta disponible.` | `error-rejilla` | **no** |
+| Hay proyecto activo pero ningun panel | `Ctrl+Shift+N para abrir un panel.` | `vacio-texto` | `Abrir un panel` |
+| El archivo de estado no se pudo leer | `No se pudo leer la lista de proyectos. No se ha borrado nada.` | `error-rejilla` | `Abrir un proyecto…` |
+
+**Los dos sin boton lo estan a proposito:** en esos dos casos la accion que toca esta en
+la lista, que ya se ve al lado. Un boton ahi competiria con ella.
+
+El boton va **debajo del texto**, separado `16px`, centrado con el.
 
 ### Lo que no lleva tratamiento, a proposito
 
@@ -976,6 +1043,9 @@ se rompio. Textos literales, centrados en la zona de la rejilla:
   y meterla en la lista adelanta trabajo del modo corrida sin que nadie lo haya pedido.
 - **La barra no se puede redimensionar arrastrando.** El ancho es `260px` y punto;
   arrastrar pide guardar la medida, y eso es una preferencia mas que nadie ha pedido.
+- **El boton del estado vacio no tiene estado hover propio declarado.** Es el unico
+  control de la aplicacion y no compite con nada; si al probarlo se ve muerto, se anade
+  entonces y se escribe aqui.
 
 ### El teclado
 
@@ -1172,3 +1242,41 @@ mirar, y es el que justifica la tanda entera:
     `#3b78ff` y ahora es `#fde047`. No es un fallo de la implementacion; se cambio a
     proposito en esta tanda, porque el azul se separaba de los bordes vecinos por
     3.6:1 y el amarillo lo hace por 10.9:1.
+
+Y los de la tanda de la paleta. El 31 es distinto de todos los demas y va el ultimo a
+proposito: es el unico que no compara la ventana con un texto, sino con un dibujo.
+
+26. **La barra se distingue de la rejilla de un vistazo, sin buscar el borde.** Es la
+    razon entera de esta tanda: la version anterior estaba a `1.01 : 1` y era la misma
+    superficie.
+27. **La fila del proyecto activo es oscura**, no un tinte claro. Y su negro es
+    practicamente el de la rejilla: el proyecto activo tiene que leerse como un hueco
+    por el que se ve el proyecto, no como una fila resaltada.
+28. **El amarillo del nombre activo y el del borde del panel enfocado son el mismo.**
+    Ponlos en pantalla a la vez —proyecto activo con un panel enfocado— y comprueba que
+    no hay dos amarillos distintos. Si los hay, alguien oscurecio uno para que se leyera
+    y rompio la regla.
+29. **Los cinco estados vacios**, uno por uno, con su texto literal. Y los botones donde
+    tocan: en la lista vacia, en "ningun panel" y en el error de lectura; **no** en
+    "ninguno activo" ni en "no disponible".
+30. **El boton es neutro, no amarillo ni lima.** Si es amarillo, dice que el boton esta
+    activo, que es falso.
+31. **La ventana y la maqueta, las dos abiertas a la vez, tienen que verse igual.**
+
+    ```
+    start .vitral/maquetas/barra-amarilla/paletas.html
+    ```
+
+    Se abre al lado de la ventana de Vitral y se comparan mirando: la barra, la fila
+    activa, los cinco estados de fila y las cinco pantallas vacias. **Lo que se busca no
+    es que coincidan los hexadecimales** —eso ya lo comprueba leer el contrato— sino que
+    la ventana produzca la misma impresion que el dibujo que se aprobo. Un valor puede
+    estar bien copiado y aun asi verse distinto por un relleno, un peso de fuente o un
+    alto de fila.
+
+    **Este punto solo se puede pasar antes de cerrar la tanda**, porque al cerrarla la
+    maqueta se borra. Esa es exactamente su vida util: existe para elegir y para
+    comprobar, y ni un dia mas.
+32. **`no-disponible` esta apagado, no invisible.** Va a `2.14 : 1` a proposito. Miralo
+    en la ventana y decide: si no se lee que ahi hay un proyecto, el valor esta mal y se
+    corrige en el contrato, no en el codigo.
