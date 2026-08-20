@@ -1,16 +1,24 @@
 // En release no se abre la consola detras de la ventana.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows_sys::Win32::System::Threading::GetSystemTimes;
 
 /// El shell del panel, escrito en un solo sitio a proposito.
 /// En esta maquina existe `powershell.exe` (Windows PowerShell 5.1) y no `pwsh.exe`.
@@ -23,10 +31,34 @@ const TROZO: usize = 4096;
 /// maquina es `%APPDATA%\com.vitral.ui\`.
 const ARCHIVO: &str = "estado.json";
 
+/// El periodo del unico hilo temporizador: una muestra por segundo, para las dos
+/// metricas y para la senal de actividad.
+const LATIDO: Duration = Duration::from_secs(1);
+
+/// La ventana de la mitad 2 de la senal: "ha escrito en el PTY en el ultimo
+/// segundo". Es exactamente el periodo del latido, asi que cualquier escritura
+/// entre dos latidos la caza el siguiente y no queda hueco.
+const RECIENTE: u64 = 1_000;
+
+/// Los nombres del host de consola, que no cuenta como hijo.
+///
+/// Medido en esta maquina y **dentro de ConPTY**, que es como corren los paneles:
+/// el `conhost.exe` de la pseudoconsola cuelga del proceso de la aplicacion, no
+/// del `powershell.exe` del panel, asi que este filtro no llega a dispararse. Se
+/// deja porque el contrato lo pide y porque no cuesta nada, no porque haga falta.
+const HOSTS: [&str; 2] = ["conhost.exe", "openconsole.exe"];
+
 struct Panel {
     escritor: Box<dyn Write + Send>,
     maestro: Box<dyn MasterPty + Send>,
     verdugo: Box<dyn ChildKiller + Send + Sync>,
+    /// El pid del proceso del panel. Es la mitad 1 de la senal de actividad: si
+    /// alguien tiene este pid por padre, el panel esta ejecutando algo.
+    pid: Option<u32>,
+    /// Cuando llego el ultimo byte del PTY, en milisegundos desde `ARRANQUE`. Es
+    /// la mitad 2 de la senal, y sale gratis: el hilo lector ya sabe cuando fue.
+    /// Lo escribe el lector sin tocar el mapa, por eso es un atomico compartido.
+    ultimo_byte: Arc<AtomicU64>,
     /// El directorio con el que arranco, normalizado. Es lo unico que hace falta
     /// para que `quitar_proyecto` sepa cuales son sus paneles. No es un "proyecto
     /// actual": es del panel, como el id.
@@ -48,6 +80,23 @@ struct Salida {
 struct Fin {
     id: String,
     codigo: u32,
+}
+
+/// `maquina:uso`: CPU y memoria de **la maquina entera**, nunca por panel.
+/// `cpu` en tanto por ciento; `usada` y `total` en bytes.
+#[derive(Clone, Serialize)]
+struct Uso {
+    cpu: f32,
+    usada: u64,
+    total: u64,
+}
+
+/// `paneles:ocupados`: **la lista completa** de los que estan ejecutando algo, en
+/// cada latido. No son altas y bajas: el frontend sustituye su lista entera y asi
+/// no hay transicion que se pueda perder.
+#[derive(Clone, Serialize)]
+struct Ocupados {
+    ids: Vec<String>,
 }
 
 /// Lo que hay dentro de `estado.json`: rutas y preferencias, nada calculado.
@@ -463,6 +512,16 @@ fn abrir_panel(
     // unico que permite matarlo desde fuera.
     let verdugo = hijo.clone_killer();
 
+    // El pid es la mitad 1 de la senal de actividad, y hay que tomarlo aqui: el
+    // vigia se lleva el `Child` y despues ya no hay a quien preguntarle.
+    let pid = hijo.process_id();
+
+    // La mitad 2 sale gratis: el lector ya sabe cuando llego el ultimo byte, solo
+    // hay que guardar la marca. Nace sellada porque el shell esta arrancando y va a
+    // escribir su prompt en seguida: un panel recien abierto si esta ejecutando algo.
+    let ultimo_byte = Arc::new(AtomicU64::new(ahora_ms()));
+    let sello = Arc::clone(&ultimo_byte);
+
     // Hilo lector: lee del PTY en trozos y emite `panel:salida`. Sale del bucle con
     // `Ok(0)` o con `Err`, indistintamente, y al salir no emite nada mas: la linea de
     // cierre la pone el vigia, que es quien sabe que ya no queda salida por delante.
@@ -475,6 +534,9 @@ fn abrir_panel(
                 // Se solto el maestro y se acabo el PTY. No es un error.
                 Ok(0) => break,
                 Ok(n) => {
+                    // La marca se pone antes de emitir: es cuando llego el byte, no
+                    // cuando termino de repartirse.
+                    sello.store(ahora_ms(), Ordering::Relaxed);
                     let carga = Salida {
                         id: id_lector.clone(),
                         datos: BASE64.encode(&buf[..n]),
@@ -495,6 +557,8 @@ fn abrir_panel(
             escritor,
             maestro: par.master,
             verdugo,
+            pid,
+            ultimo_byte,
             cwd: destino,
         },
     );
@@ -621,24 +685,252 @@ fn matar_todos(app: &AppHandle) {
     }
 }
 
+// --- El uso de la maquina y la senal de actividad ---------------------------
+//
+// Las dos cosas las emite **un solo hilo temporizador**, no uno por metrica, y las
+// dos son de Rust entero: el frontend recibe cifras y una lista ya resuelta, y no
+// calcula nada. No es reparto de comodidad: es lo que hace que medir no pueda
+// bloquear al frontend.
+
+/// El origen del reloj de la senal. Se usa un `Instant` y no la hora del sistema
+/// porque lo unico que interesan son diferencias, y un cambio de hora no puede
+/// mover el pasado.
+static ARRANQUE: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+fn ahora_ms() -> u64 {
+    ARRANQUE.elapsed().as_millis() as u64
+}
+
+/// Los tiempos acumulados de la maquina. La CPU no es un valor instantaneo: es la
+/// diferencia entre dos muestras, y por eso hay que guardar la anterior.
+#[derive(Clone, Copy)]
+struct Tiempos {
+    ocioso: u64,
+    total: u64,
+}
+
+fn de_filetime(f: &FILETIME) -> u64 {
+    ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64
+}
+
+/// `GetSystemTimes`: los tres tiempos de **la maquina entera**, nunca por panel.
+/// Medido aqui junto con `GlobalMemoryStatusEx`: `0,01 ms` por muestra, mas barato
+/// aun que el `1 ms` que el contrato midio con los contadores de rendimiento, y sin
+/// ningun manejador que abrir ni que se pueda quedar a medias.
+fn tiempos() -> Option<Tiempos> {
+    // SEGURIDAD: tres `FILETIME` de la pila que la llamada solo escribe.
+    unsafe {
+        let mut ocioso: FILETIME = std::mem::zeroed();
+        let mut nucleo: FILETIME = std::mem::zeroed();
+        let mut usuario: FILETIME = std::mem::zeroed();
+        if GetSystemTimes(&mut ocioso, &mut nucleo, &mut usuario) == 0 {
+            return None;
+        }
+        // `nucleo` ya lleva dentro el tiempo ocioso, asi que el total del intervalo
+        // es nucleo + usuario y lo parado es `ocioso` a secas.
+        Some(Tiempos {
+            ocioso: de_filetime(&ocioso),
+            total: de_filetime(&nucleo) + de_filetime(&usuario),
+        })
+    }
+}
+
+/// Memoria fisica de la maquina, en bytes, que es la unidad que pide el evento.
+fn memoria() -> Option<(u64, u64)> {
+    // SEGURIDAD: una estructura de la pila con su `dwLength` puesto, como exige la
+    // llamada, que solo la escribe.
+    unsafe {
+        let mut m: MEMORYSTATUSEX = std::mem::zeroed();
+        m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        if GlobalMemoryStatusEx(&mut m) == 0 {
+            return None;
+        }
+        Some((m.ullTotalPhys.saturating_sub(m.ullAvailPhys), m.ullTotalPhys))
+    }
+}
+
+/// El host de consola no cuenta como hijo. Ver el comentario de `HOSTS`: medido
+/// dentro de ConPTY, esto no llega a dispararse.
+fn es_host(nombre: &[u16]) -> bool {
+    let fin = nombre.iter().position(|&c| c == 0).unwrap_or(nombre.len());
+    let texto = String::from_utf16_lossy(&nombre[..fin]).to_lowercase();
+    HOSTS.contains(&texto.as_str())
+}
+
+/// **Un unico snapshot del sistema**, que da todos los padres de una pasada y vale
+/// para los cuatro paneles a la vez.
+///
+/// Esta es la puerta que el contrato manda medir antes de escribir la mitad 1, y la
+/// cifra de esta maquina es `8,1 ms` de media y `9,4 ms` el peor de doce muestras,
+/// con 256 procesos vivos. Por debajo del umbral de `20 ms`, asi que la mitad 1
+/// entra. A 1 Hz eso es un `0,8 %` de un nucleo.
+///
+/// Lo que **no** se hace es preguntar por los hijos de cada pid por separado: eso
+/// son 48 ms por panel via WMI, 190 ms con cuatro paneles, y es inaceptable.
+fn pids_con_hijo(interesan: &HashSet<u32>) -> HashSet<u32> {
+    let mut con_hijo = HashSet::new();
+    // SEGURIDAD: el manejador se cierra en todos los caminos, y la entrada lleva su
+    // `dwSize` puesto, que es lo que exige `Process32FirstW`.
+    unsafe {
+        let foto = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if foto == INVALID_HANDLE_VALUE {
+            // Sin snapshot no hay mitad 1 en este latido. No es un error que aborte
+            // nada: la senal se queda con la mitad 2 y el evento se emite igual.
+            return con_hijo;
+        }
+        let mut entrada: PROCESSENTRY32W = std::mem::zeroed();
+        entrada.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(foto, &mut entrada) != 0 {
+            loop {
+                let padre = entrada.th32ParentProcessID;
+                if interesan.contains(&padre) && !es_host(&entrada.szExeFile) {
+                    con_hijo.insert(padre);
+                }
+                if Process32NextW(foto, &mut entrada) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(foto);
+    }
+    con_hijo
+}
+
+/// La senal entera, ya resuelta: el frontend no calcula ninguna de las dos mitades.
+///
+/// Un panel esta ejecutando algo si se cumple **cualquiera** de las dos:
+///
+/// 1. tiene un proceso hijo que no sea el host de consola;
+/// 2. ha escrito en el PTY en el ultimo segundo.
+///
+/// Cada mitad tapa el agujero de la otra: la 1 no ve los cmdlets que PowerShell
+/// ejecuta en proceso, y la 2 no ve el trabajo silencioso.
+fn ocupados(app: &AppHandle) -> Vec<String> {
+    let estado: State<'_, Paneles> = app.state();
+
+    // El mapa se suelta **antes** del snapshot. Ocho milisegundos con el mutex en la
+    // mano bloquearian a los ocho comandos sin ninguna necesidad, que es la misma
+    // razon por la que el vigia suelta el bloqueo antes de esperar al lector.
+    let vivos: Vec<(String, Option<u32>, u64)> = {
+        let mapa = match estado.0.lock() {
+            Ok(mapa) => mapa,
+            Err(_) => return Vec::new(),
+        };
+        mapa.iter()
+            .map(|(id, panel)| {
+                (
+                    id.clone(),
+                    panel.pid,
+                    panel.ultimo_byte.load(Ordering::Relaxed),
+                )
+            })
+            .collect()
+    };
+
+    let ahora = ahora_ms();
+    let reciente = |ultimo: u64| ahora.saturating_sub(ultimo) <= RECIENTE;
+
+    // El snapshot solo se pide si queda alguno sin resolver: los 8 ms no se pagan
+    // para confirmar lo que la mitad 2 ya dijo, ni cuando no hay ningun panel.
+    let pendientes: HashSet<u32> = vivos
+        .iter()
+        .filter(|(_, _, ultimo)| !reciente(*ultimo))
+        .filter_map(|(_, pid, _)| *pid)
+        .collect();
+    let con_hijo = if pendientes.is_empty() {
+        HashSet::new()
+    } else {
+        pids_con_hijo(&pendientes)
+    };
+
+    vivos
+        .into_iter()
+        .filter(|(_, pid, ultimo)| reciente(*ultimo) || pid.is_some_and(|p| con_hijo.contains(&p)))
+        .map(|(id, _, _)| id)
+        .collect()
+}
+
+/// El **unico** hilo temporizador, que emite los dos eventos nuevos. Una muestra por
+/// segundo, y no se pausa al perder el foco: mientras un agente corre la persona
+/// esta en otra ventana, y pausar justo ahi vaciaria de sentido la funcion.
+///
+/// La GPU no se muestrea. Esta medida —`1,544 ms` por muestra, y Windows no expone
+/// ningun contador agregado— y el contrato la deja fuera.
+fn latido(app: AppHandle, minimizada: Arc<AtomicBool>) {
+    let mut previo = tiempos();
+    loop {
+        std::thread::sleep(LATIDO);
+
+        // Solo se pausa con la ventana minimizada, que es cuando no hay nada que
+        // pintar. `previo` se queda como estaba, asi que al restaurar, el primer
+        // valor de CPU es el del intervalo entero que estuvo minimizada: es lo que
+        // dice el contrato, no un descuido.
+        if minimizada.load(Ordering::Relaxed) {
+            continue;
+        }
+
+        // Si los tiempos o la memoria no se pueden leer, `maquina:uso` **no se
+        // emite** y la franja muestra guiones. No es un error que aborte nada.
+        let ahora = tiempos();
+        if let (Some(ahora), Some(antes), Some((usada, total))) = (ahora, previo, memoria()) {
+            let intervalo = ahora.total.saturating_sub(antes.total);
+            if intervalo > 0 {
+                let parado = ahora.ocioso.saturating_sub(antes.ocioso);
+                let cpu = 100.0 * (1.0 - parado as f64 / intervalo as f64);
+                let _ = app.emit(
+                    "maquina:uso",
+                    Uso {
+                        cpu: cpu.clamp(0.0, 100.0) as f32,
+                        usada,
+                        total,
+                    },
+                );
+            }
+        }
+        if ahora.is_some() {
+            previo = ahora;
+        }
+
+        // La lista completa en cada latido, tambien cuando esta vacia: el frontend
+        // sustituye la suya entera y no lleva contabilidad propia, asi que una lista
+        // vacia es justo lo que apaga los indicadores.
+        let _ = app.emit("paneles:ocupados", Ocupados { ids: ocupados(&app) });
+    }
+}
+
 fn main() {
+    // Tauri v2 no tiene ningun `WindowEvent::Minimized`, pero en Windows minimizar
+    // manda un `WM_SIZE` con el area de cliente a cero, y tao lo reenvia tal cual
+    // como `Resized(0, 0)`. Se apunta aqui y el hilo del latido solo lee un
+    // booleano: preguntarle a la ventana desde otro hilo obligaria a cruzar el bucle
+    // de eventos una vez por segundo, y eso si se puede quedar colgado al cerrar.
+    let minimizada = Arc::new(AtomicBool::new(false));
+    let minimizada_latido = Arc::clone(&minimizada);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Paneles(Mutex::new(HashMap::new())))
         .manage(Persistido(Mutex::new(Almacen::default())))
-        .setup(|app| {
+        .setup(move |app| {
             // Se lee una vez al arrancar, y solo aqui.
             let cargado = cargar(app.handle());
             let estado: State<'_, Persistido> = app.state();
             if let Ok(mut almacen) = estado.0.lock() {
                 *almacen = cargado;
             }
+
+            // El unico hilo temporizador, que emite `maquina:uso` y
+            // `paneles:ocupados`. Uno, no uno por metrica.
+            let app_latido = app.handle().clone();
+            std::thread::spawn(move || latido(app_latido, minimizada_latido));
             Ok(())
         })
-        .on_window_event(|ventana, evento| {
-            if let WindowEvent::CloseRequested { .. } = evento {
-                matar_todos(ventana.app_handle());
+        .on_window_event(move |ventana, evento| match evento {
+            WindowEvent::CloseRequested { .. } => matar_todos(ventana.app_handle()),
+            WindowEvent::Resized(tamano) => {
+                minimizada.store(tamano.width == 0 || tamano.height == 0, Ordering::Relaxed);
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             abrir_panel,

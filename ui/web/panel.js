@@ -41,6 +41,25 @@ const VACIO_ILEGIBLE = 'No se pudo leer la lista de proyectos. No se ha borrado 
 const BOTON_PROYECTO = 'Abrir un proyecto…';
 const BOTON_PANEL = 'Abrir un panel';
 
+// Lo que muestra la franja de estado mientras no haya llegado ninguna muestra. Un
+// guion y no un cero: si los contadores de rendimiento no se pueden abrir,
+// `maquina:uso` no se emite nunca y un `0%` seria una cifra falsa. No es un error
+// que aborte nada.
+const SIN_CIFRA = '—';
+
+// La memoria viene en bytes y se ensena en GB, que es como los cuenta Windows:
+// potencias de 1024.
+const GIB = 1024 * 1024 * 1024;
+
+// La ruta de la fila se corta POR LA IZQUIERDA con `direction: rtl`, y eso deja el
+// texto a merced del algoritmo bidi: una ruta acabada en `\` -`C:\`, por ejemplo-
+// tiene esa barra como caracter neutro al final, que en una caja rtl se va al
+// principio y se ve `\C:`. Envolver la ruta en un aislamiento LTR (U+2066 … U+2069)
+// lo fija sin tocar la direccion de la caja, que es la que pone los puntos
+// suspensivos a la izquierda.
+const AISLA_IZQUIERDA = '\u2066';
+const AISLA_FIN = '\u2069';
+
 /// El PTY manda bytes en base64 justo para que un caracter UTF-8 partido entre dos
 /// lecturas no se pierda: quien lo junta es xterm, que recibe bytes y no texto.
 function bytesDesdeBase64(texto) {
@@ -346,6 +365,10 @@ const rejillas = {
     this.enfocar(id);
     panel.arrancar();
     pintarVacio();
+    // El contador de su proyecto acaba de subir, y eso no lo dice ningun evento de
+    // Rust: la senal de ocupado si llega sola, pero cuantos paneles vivos hay solo
+    // se sabe por aqui.
+    pintarActividad();
   },
 
   cerrar(id) {
@@ -370,6 +393,7 @@ const rejillas = {
     rejilla.enfocado = rejilla.orden.length === 0 ? null : rejilla.orden[indice === 0 ? 0 : indice - 1];
     if (rejilla.enfocado !== null) this.enfocar(rejilla.enfocado);
     pintarVacio();
+    pintarActividad();
   },
 
   /// Ctrl+Shift+W: el enfocado de la rejilla que se ve, si hay alguno.
@@ -402,6 +426,26 @@ const rejillas = {
     if (panel) panel.enfocar();
   },
 
+  /// Cuantos paneles VIVOS tiene un proyecto, INCLUIDOS LOS OCULTOS: es el numero
+  /// que sale en el contador de su fila, y es la razon de esta tanda. Hasta hoy se
+  /// podian dejar cuatro terminales corriendo en un proyecto, cambiar a otro, y no
+  /// quedaba ni rastro de ellos en la pantalla.
+  ///
+  /// Vivo quiere decir que su proceso no ha muerto, no que ocupe celda: el tope de
+  /// cuatro cuenta celdas, pero un panel muerto ya no ejecuta nada y el contrato
+  /// deja sin contador ni indicador al proyecto que no tiene ninguno vivo.
+  vivos(ruta) {
+    const rejilla = this.porProyecto.get(ruta);
+    if (!rejilla) return 0;
+
+    let cuantos = 0;
+    for (const id of rejilla.orden) {
+      const panel = this.paneles.get(id);
+      if (panel && !panel.muerto) cuantos += 1;
+    }
+    return cuantos;
+  },
+
   /// La forma la decide el numero de paneles, y la clase la lee el CSS. Al anadir
   /// o quitar un panel se reajustan todos, no solo el que entra o sale. Se toca
   /// solo la clase de la forma para no llevarse por delante la de `oculta`.
@@ -420,6 +464,30 @@ const error = document.getElementById('error');
 const vacio = document.getElementById('vacio');
 const vacioTexto = document.getElementById('vacio-texto');
 const vacioBoton = document.getElementById('vacio-boton');
+const pieCpu = document.getElementById('pie-cpu');
+const pieRam = document.getElementById('pie-ram');
+
+/// El hueco del indicador y el contador de cada fila, por ruta. Se guardan al pintar
+/// la lista para poder ponerlos al dia SIN VOLVER A CONSTRUIR LA FILA: `pintarLista`
+/// rehace la lista entera, y hacer eso una vez por segundo reiniciaria la animacion
+/// del indicador en cada latido. Los cuatro cuadrados no llegarian a dar la vuelta
+/// nunca: se quedarian parpadeando en el primero.
+const filas = new Map();
+
+/// Los ids que estan ejecutando algo, tal como llegaron en el ultimo latido de
+/// `paneles:ocupados`.
+///
+/// AQUI NO SE CALCULA NADA. Las dos mitades de la senal -tener un proceso hijo y
+/// haber escrito en el ultimo segundo- las resuelve Rust, que es quien sabe cuando
+/// llego el ultimo byte y quien puede sacar el snapshot de procesos. Lo unico que se
+/// hace por este lado es SUSTITUIR la lista de antes por la que llega, que viene
+/// COMPLETA en cada latido: sin contabilidad propia de altas y bajas no hay
+/// transicion que se pueda perder ni estado que se desincronice.
+///
+/// Y si el evento deja de llegar, los indicadores se quedan como estan. No hay
+/// tiempo de caducidad inventado por este lado: el contrato no lo da, y apagarlos
+/// solos convertiria una parada del emisor en un proyecto que parece parado.
+let ocupados = new Set();
 
 /// El ultimo `Estado` que devolvio Rust, tal cual llego. Los tres comandos que lo
 /// devuelven mandan el estado ENTERO recalculado, asi que aqui no se mantiene una
@@ -466,30 +534,76 @@ function pintar() {
   pintarVacio();
 }
 
+/// Los cuatro cuadraditos. El ORDEN DEL ANILLO -y con el el reparto de los cuatro
+/// retardos- lo pone entero el CSS por `nth-child`, y ahi esta explicado por que el
+/// del cuarto hijo va antes que el del tercero. Aqui solo se crean los cuatro hijos
+/// en orden de DOM, que es el que la rejilla de 2x2 coloca arriba-izq, arriba-der,
+/// abajo-izq, abajo-der.
+function indicador() {
+  const marca = document.createElement('span');
+  marca.className = 'indicador';
+  for (let i = 0; i < 4; i += 1) marca.append(document.createElement('i'));
+  return marca;
+}
+
 function pintarLista() {
   lista.replaceChildren();
+  filas.clear();
 
   for (const proyecto of app.estado.proyectos) {
     const fila = document.createElement('li');
     fila.className = 'fila';
-    // La ruta completa no ocupa linea: va como `title`, que el sistema muestra al
-    // detenerse encima.
+    // La ruta completa ya no vive en el `title`: se ve siempre, en la segunda linea.
+    // El `title` se queda solo como respaldo de cuando no cabe y hay que cortarla.
     fila.title = proyecto.ruta;
     if (!proyecto.disponible) fila.classList.add('no-disponible');
     if (proyecto.ruta === app.estado.activo) fila.classList.add('activa');
 
+    // El icono: la inicial del nombre, y SALE DEL NOMBRE, nunca del contenido del
+    // proyecto. La mayuscula la pone el CSS con `text-transform`, asi que `vitral`
+    // da `V` sin que aqui haya que decidir nada sobre localizaciones.
+    const inicial = document.createElement('span');
+    inicial.className = 'inicial';
+    inicial.setAttribute('aria-hidden', 'true');
+    // Por puntos de codigo y no por `slice(0, 1)`: una carpeta cuyo nombre empieza
+    // por un caracter fuera del plano basico partiria su par suplente por la mitad
+    // y el cuadro ensenaria un simbolo de reemplazo en vez de una inicial.
+    inicial.textContent = [...proyecto.nombre][0] ?? '';
+
     const nombre = document.createElement('button');
     nombre.type = 'button';
     nombre.className = 'nombre';
-    // El nombre no se guarda: es el ultimo segmento de la ruta, y ya viene
-    // calculado en el `Estado`.
-    nombre.textContent = proyecto.nombre;
-    nombre.title = proyecto.ruta;
+
+    // Linea 1: el nombre. No se guarda en el archivo, es el ultimo segmento de la
+    // ruta y ya viene calculado en el `Estado`.
+    const nombreLinea = document.createElement('span');
+    nombreLinea.className = 'nombre-linea';
+    nombreLinea.textContent = proyecto.nombre;
+
+    // Linea 2: LA RUTA COMPLETA, que hasta esta tanda solo se veia al detener el
+    // raton encima. Va aislada como texto de izquierda a derecha dentro de una caja
+    // rtl: la caja es lo que pone los puntos suspensivos a la izquierda.
+    const rutaLinea = document.createElement('span');
+    rutaLinea.className = 'ruta-linea';
+    rutaLinea.textContent = `${AISLA_IZQUIERDA}${proyecto.ruta}${AISLA_FIN}`;
+
+    nombre.append(nombreLinea, rutaLinea);
     // Un proyecto no disponible no se puede activar, y su fila no responde al
     // clic: quien lo impide es `activar`. No se usa `disabled`, que en Windows
     // se come tambien el `title` con la ruta entera.
     if (!proyecto.disponible) nombre.setAttribute('aria-disabled', 'true');
     nombre.addEventListener('click', () => activar(proyecto.ruta));
+
+    // El hueco del indicador se reserva siempre; lo que no se reserva es el
+    // indicador, que solo existe mientras el proyecto ejecuta algo. Quien lo pone y
+    // lo quita es `pintarActividad`, y lo hace SOLO cuando el estado cambia.
+    const actividad = document.createElement('span');
+    actividad.className = 'actividad';
+
+    // El contador de paneles vivos. Vacio si no hay ninguno: el CSS lo esconde con
+    // `:empty`, asi que un proyecto parado no ensena ni un cero.
+    const cuenta = document.createElement('span');
+    cuenta.className = 'cuenta';
 
     // Un proyecto no disponible si se puede quitar: un disco desmontado vuelve,
     // pero la decision de olvidarlo es del usuario y no nuestra.
@@ -500,9 +614,70 @@ function pintarLista() {
     quitarlo.title = `Quitar "${proyecto.nombre}" de la lista`;
     quitarlo.addEventListener('click', () => quitar(proyecto.ruta));
 
-    fila.append(nombre, quitarlo);
+    fila.append(inicial, nombre, actividad, cuenta, quitarlo);
     lista.append(fila);
+    filas.set(proyecto.ruta, { actividad, cuenta, ocupado: false });
   }
+
+  // La lista se acaba de rehacer, asi que los contadores estan vacios y no hay
+  // ningun indicador puesto: hay que volver a decir lo que ya se sabia.
+  pintarActividad();
+}
+
+/// El contador y el indicador de cada fila, puestos al dia. Se llama una vez por
+/// segundo -en cada latido de `paneles:ocupados`- y tambien cada vez que un panel
+/// nace, muere o se cierra, que es cuando cambia el contador sin que cambie nada de
+/// lo que manda Rust.
+///
+/// EL DOM SOLO SE TOCA CUANDO ALGO CAMBIA DE VERDAD. Quitar y volver a poner el
+/// indicador en cada latido reiniciaria su animacion cada segundo y los cuatro
+/// cuadrados nunca completarian la vuelta de 1.6s.
+function pintarActividad() {
+  // La senal llega por panel; la fila es por proyecto. Un proyecto esta ejecutando
+  // algo si lo esta alguno de sus paneles, incluidos los que ahora mismo no se ven.
+  const rutasOcupadas = new Set();
+  for (const id of ocupados) {
+    const ruta = rejillas.dueno.get(id);
+    if (ruta !== undefined) rutasOcupadas.add(ruta);
+  }
+
+  for (const [ruta, fila] of filas) {
+    const cuantos = rejillas.vivos(ruta);
+    const texto = cuantos > 0 ? String(cuantos) : '';
+    if (fila.cuenta.textContent !== texto) fila.cuenta.textContent = texto;
+
+    // Sin ningun panel vivo no hay nada que pueda estar ejecutandose, por muy tarde
+    // que llegue un latido con un id suyo dentro.
+    const ocupado = cuantos > 0 && rutasOcupadas.has(ruta);
+    if (ocupado === fila.ocupado) continue;
+
+    fila.ocupado = ocupado;
+    // Cuando el proyecto no ejecuta nada el indicador NO ESTA: no se queda en gris
+    // ocupando sitio. La mitad de su trabajo es que un proyecto parado se vea parado.
+    fila.actividad.replaceChildren();
+    if (ocupado) fila.actividad.append(indicador());
+  }
+}
+
+/// La franja de estado. CPU y memoria DE LA MAQUINA ENTERA, que es lo que se quiere
+/// saber: atribuir procesos a un panel miente por debajo en cuanto uno se desprende
+/// del arbol.
+function pintarUso(uso) {
+  // Una cifra que no es una cifra se ensena como el guion de "todavia no hay
+  // muestra", no como `NaN%`: la franja es informativa y un numero roto ahi vale
+  // menos que un hueco honrado.
+  pieCpu.textContent = Number.isFinite(uso.cpu) ? `${Math.round(uso.cpu)}%` : SIN_CIFRA;
+
+  if (!Number.isFinite(uso.usada) || !Number.isFinite(uso.total) || uso.total <= 0) {
+    pieRam.textContent = SIN_CIFRA;
+    return;
+  }
+
+  const usada = (uso.usada / GIB).toLocaleString('es-ES', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  pieRam.textContent = `${usada} / ${Math.round(uso.total / GIB)} GB`;
 }
 
 /// Cual de los cinco estados vacios toca, o `null` si hay paneles que mostrar.
@@ -721,7 +896,23 @@ Promise.all([
   listen('panel:fin', ({ payload }) => {
     const panel = rejillas.paneles.get(payload.id);
     if (panel) panel.morir(payload.codigo);
+    // Un panel menos vivo en su proyecto: baja el contador, y si era el ultimo
+    // desaparece con el indicador. `Panel` no sabe que existe la barra, asi que
+    // quien lo cuenta es esto, desde fuera.
+    pintarActividad();
   }),
+  // La senal llega YA RESUELTA y con la lista COMPLETA en cada latido: se sustituye
+  // la de antes por la que llega, sin llevar altas y bajas por este lado. Un panel
+  // que muere mientras ejecutaba algo simplemente no viene en el latido siguiente,
+  // y su indicador desaparece sin que haga falta ningun aviso aparte.
+  listen('paneles:ocupados', ({ payload }) => {
+    ocupados = new Set(payload.ids);
+    pintarActividad();
+  }),
+  // Una muestra por segundo. No se pausa al perder el foco -mientras un agente corre
+  // vas a estar en otra ventana- y con la ventana minimizada Rust deja de emitir, asi
+  // que la franja se queda con la ultima cifra hasta que vuelva a llegar una.
+  listen('maquina:uso', ({ payload }) => pintarUso(payload)),
 ]).then(leer_estado);
 
 /// Al cargar no se abre ningun panel: se lee el estado, se pinta la lista y, si hay

@@ -15,3 +15,17 @@ base64 = "0.23.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-dialog = "2.7.2"
+
+# El snapshot de procesos de la senal de actividad y los dos contadores de la
+# maquina. La version es la que ya resolvia el lock por debajo (la arrastran tauri
+# y portable-pty), asi que pedirla aqui no anade nada al arbol.
+#
+# Esto ata el crate a Windows en tiempo de compilacion, y es deliberado: el
+# contrato dice que Windows es lo unico que se prueba y se sostiene, y una version
+# con `cfg` para otros sistemas seria codigo muerto que alguien tendria que revisar.
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }

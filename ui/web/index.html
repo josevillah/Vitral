@@ -44,6 +44,11 @@
         --activo-fondo: #231e12;
         --activo-texto: #fde047;
         --activo-marca: #bef264;
+        /* La segunda linea de la fila activa. El contrato manda la ruta en
+           `texto-tenue`, que es de la barra clara y aqui daria 1.35: es el hueco que
+           dejo al subir la ruta del `title` a la fila. Se toma el valor de la
+           maqueta, que da 4.08 sobre `activo-fondo`. */
+        --activo-ruta: #8d7f4a;
 
         /* --------- superficie 3 · la rejilla, #0c0c0c --------- */
         --vacio-texto: #847c69;
@@ -52,7 +57,45 @@
         --boton-borde: #4a4128;
         --boton-texto: #e0dac9;
 
+        /* --------- superficie 4 · la franja de estado al pie, #332c1c ---------
+
+           Se separa de la rejilla por COLOR Y POR CANTO a la vez, y las dos cosas
+           son necesarias: la version anterior de la barra se apoyo solo en el canto
+           y acabo a 1.01 : 1 de la rejilla, que es lo mismo que no existir. Quitar
+           cualquiera de las dos repite aquel fallo.
+
+           `pie-borde` es el mismo valor que `barra-borde`, a proposito: es el mismo
+           canto dando la vuelta a la ventana. */
+        --pie-fondo: #332c1c;
+        --pie-borde: #c8bc98;
+        --pie-valor: #e0dac9;
+        --pie-etiqueta: #a39c84;
+
+        /* --------- el icono de un proyecto ---------
+
+           El cuadro es claro y la letra oscura, asi que el par funciona en las dos
+           superficies en las que puede caer: sobre la barra clara el cuadro solo da
+           1.48 y el peso lo lleva la letra, que da 7.51 sobre el cuadro; sobre la
+           fila activa oscura el cuadro da 8.77 y destaca solo.
+
+           Por eso NO LLEVA CANTO en la fila activa, y esta medido: con 8.77 ya se
+           separa, y un borde ahi solo mete ruido donde ya hay separacion. La maqueta
+           si lo lleva; manda el contrato. */
+        --icono-fondo: #c8bc98;
+        --icono-texto: #2e2b1c;
+
+        /* --------- el indicador de actividad ---------
+
+           `#fde047` NO se puede usar aqui, y esta medido: da 1.03 : 1 sobre la barra
+           clara, o sea invisible. El ambar es ese mismo amarillo bajado hasta donde
+           se ve sobre pergamino: 3.14 sobre la barra y 4.12 sobre la fila activa.
+           El oliva da 3.86 y 3.36. */
+        --ind-apagado: #b9ae90;
+        --ind-oliva: #5c7a12;
+        --ind-ambar: #9a7b16;
+
         --fuente-barra: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+        --fuente-mono: 'Cascadia Mono', Consolas, monospace;
       }
 
       html,
@@ -65,12 +108,24 @@
         background: #0c0c0c;
       }
 
-      /* La barra y la zona de rejillas se reparten el ancho; juntas ocupan la
-         ventana entera. Sin menus, sin botones de ventana, sin titulos. */
+      /* La ventana es ahora dos franjas apiladas: el cuerpo, que se reparten la
+         barra y la zona de rejillas, y la franja de estado, que va A TODO EL ANCHO
+         y por debajo de las dos. Sin menus, sin botones de ventana, sin titulos. */
       #app {
         display: flex;
+        flex-direction: column;
         width: 100%;
         height: 100%;
+      }
+
+      /* `min-height: 0` para que el cuerpo ceda sus 28px al pie en vez de desbordar
+         la ventana: sin el, un hijo de flex no encoge por debajo de su contenido y
+         la franja se saldria por abajo. */
+      #cuerpo {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        width: 100%;
       }
 
       /* ---------------------------------------------------------------- barra */
@@ -135,12 +190,22 @@
         list-style: none;
       }
 
-      /* Alto de fila 32px, y el resto de medidas sale de la escala 4/8/12/16/24. */
+      /* Alto de fila 44px -eran 32- y dos lineas, y el resto de medidas sale de la
+         escala 4/8/12/16/24. De izquierda a derecha: la marca del activo en 0-3px,
+         el icono en 16-38px, el nombre y la ruta ocupando el resto, y a la derecha
+         el indicador de actividad con el contador de paneles a su derecha.
+
+         El relleno izquierdo es 16 y el hueco 8, los dos de la escala: el icono cae
+         en 16-38 como dice el contrato y el texto empieza en 46. La maqueta lo pone
+         en 48 con un hueco de 10, que esta fuera de la escala; manda la escala. */
       .fila {
         position: relative;
         display: flex;
         align-items: center;
-        height: 32px;
+        gap: 8px;
+        box-sizing: border-box;
+        height: 44px;
+        padding: 0 8px 0 16px;
       }
 
       .fila:hover {
@@ -172,22 +237,191 @@
         background: var(--activo-marca);
       }
 
-      /* La ruta completa no ocupa linea: va en el `title` de la fila. Un nombre
-         que no cabe en 260px se corta con puntos suspensivos. */
+      /* El icono. Un cuadro de 22x22 con LA INICIAL EN MAYUSCULA SIEMPRE, aunque la
+         carpeta se llame en minusculas: `vitral` da `V`. La mayuscula la pone el CSS
+         con `text-transform`, no el JavaScript, para que no dependa de la
+         localizacion del `toUpperCase`.
+
+         Sale de la ruta y NUNCA del contenido del proyecto: deducirlo del lenguaje,
+         del framework o del tipo de repositorio obligaria a mirar dentro, que es lo
+         que no se hace por ningun camino. Un icono asi no entra ni disfrazado de
+         mejora pequena.
+
+         Dos proyectos con la misma inicial llevan el mismo icono, y se acepta: en
+         una lista larga, unos cuadros con una letra y otros con dos se ven
+         desiguales. Quien distingue ahi es el nombre y la ruta, que estan al lado. */
+      .inicial {
+        flex: 0 0 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 3px;
+        background: var(--icono-fondo);
+        color: var(--icono-texto);
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1;
+        text-transform: uppercase;
+        user-select: none;
+      }
+
+      /* Dos lineas: el nombre y, debajo, la RUTA COMPLETA, que hasta esta tanda
+         vivia escondida en el `title` y ahora se ve siempre. El boton es el area de
+         clic de las dos. */
       .nombre {
         flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: stretch;
         min-width: 0;
-        height: 32px;
-        padding: 0 8px 0 16px;
+        padding: 0;
         border: 0;
         background: transparent;
         color: var(--texto);
         font: inherit;
         text-align: left;
+        cursor: pointer;
+      }
+
+      /* Un nombre que no cabe se corta por la derecha, que es lo normal. */
+      .nombre-linea {
+        line-height: 16px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        cursor: pointer;
+      }
+
+      /* Y LA RUTA SE CORTA POR LA IZQUIERDA, que es donde esta lo generico: se
+         prefiere perder `C:\Users\...` antes que el nombre de la carpeta.
+
+         `direction: rtl` mueve el extremo de desbordamiento -y con el los puntos
+         suspensivos- al lado izquierdo; `text-align: left` es lo que evita que una
+         ruta corta, que cabe entera, se pegue al borde derecho. El texto en si sigue
+         leyendose de izquierda a derecha porque `pintarLista` lo envuelve en un
+         aislamiento LTR: sin el, una ruta acabada en `\` dejaria esa barra suelta al
+         principio, que es la unica forma en que el algoritmo bidi muerde aqui. */
+      .ruta-linea {
+        direction: rtl;
+        color: var(--texto-tenue);
+        font-size: 11px;
+        line-height: 14px;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Sobre la fila activa `texto-tenue` daria 1.35 y la ruta no se leeria: es un
+         token de la barra clara y la fila activa es superficie 2. El contrato no
+         nombra ningun token para este caso -es el hueco que dejo- y se toma el valor
+         de la maqueta, que ahi da 4.08 sobre `activo-fondo`. */
+      .fila.activa .ruta-linea {
+        color: var(--activo-ruta);
+      }
+
+      /* El indicador y el contador viven a la derecha, y el contador el ultimo. El
+         hueco del indicador se reserva SIEMPRE aunque el indicador no este, que es
+         lo que hace que el contador no baile de sitio cada vez que un proyecto
+         arranca o para. Reservar el hueco no es dejar el indicador apagado: cuando un
+         proyecto no ejecuta nada ahi no se dibuja nada. */
+      .actividad {
+        flex: 0 0 14px;
+        width: 14px;
+        height: 14px;
+      }
+
+      /* Cuatro cuadraditos de 6x6 con 2px de separacion, que suman 14x14. */
+      .indicador {
+        display: grid;
+        grid-template-columns: 6px 6px;
+        grid-template-rows: 6px 6px;
+        gap: 2px;
+      }
+
+      /* `background-color` y no la abreviatura `background`: lo que se anima es solo
+         el color, y animar una abreviatura con `var()` dentro es pedirle al motor mas
+         de lo que hace falta. */
+      .indicador i {
+        border-radius: 1px;
+        background-color: var(--ind-apagado);
+      }
+
+      /* EL COLOR VIAJA POR EL ANILLO: arriba-izquierda, arriba-derecha,
+         abajo-derecha, abajo-izquierda, alternando oliva y ambar. Da sensacion de
+         giro sin que nada gire.
+
+         Y AQUI ESTA LA TRAMPA: una rejilla de 2x2 coloca a sus hijos en orden
+         arriba-izq, arriba-der, ABAJO-IZQ, abajo-der, asi que el tercer hijo del DOM
+         es la esquina de abajo a la izquierda y el cuarto la de abajo a la derecha.
+         Como el anillo pasa por abajo-derecha ANTES que por abajo-izquierda, el
+         retardo del CUARTO hijo (0.8s) va antes que el del TERCERO (1.2s). Si se
+         escriben en orden 1-2-3-4 el color rebota en zigzag en vez de girar. */
+      @keyframes enciende-oliva {
+        0%,
+        100% {
+          background-color: var(--ind-apagado);
+        }
+        12%,
+        22% {
+          background-color: var(--ind-oliva);
+        }
+      }
+
+      @keyframes enciende-ambar {
+        0%,
+        100% {
+          background-color: var(--ind-apagado);
+        }
+        12%,
+        22% {
+          background-color: var(--ind-ambar);
+        }
+      }
+
+      /* Ciclo completo 1.6s, un cuadrado encendido cada 0.4s. */
+      .indicador i:nth-child(1) {
+        animation: enciende-oliva 1.6s linear infinite;
+        animation-delay: 0s;
+      }
+
+      .indicador i:nth-child(2) {
+        animation: enciende-ambar 1.6s linear infinite;
+        animation-delay: 0.4s;
+      }
+
+      /* abajo-derecha: cuarto hijo del DOM, tercero del anillo */
+      .indicador i:nth-child(4) {
+        animation: enciende-oliva 1.6s linear infinite;
+        animation-delay: 0.8s;
+      }
+
+      /* abajo-izquierda: tercer hijo del DOM, cuarto del anillo */
+      .indicador i:nth-child(3) {
+        animation: enciende-ambar 1.6s linear infinite;
+        animation-delay: 1.2s;
+      }
+
+      /* El numero de paneles VIVOS de ese proyecto, incluidos los ocultos. Aparece
+         solo si es mayor que cero, y es la razon de esta tanda: hasta hoy podias
+         dejar cuatro terminales corriendo en un proyecto, cambiar a otro, y no
+         quedaba ni rastro. */
+      .cuenta {
+        flex: 0 0 auto;
+        color: var(--texto-tenue);
+        font-family: var(--fuente-mono);
+        font-size: 11px;
+        line-height: 1;
+      }
+
+      .cuenta:empty {
+        display: none;
+      }
+
+      .fila.activa .cuenta {
+        color: var(--activo-marca);
       }
 
       /* El mismo amarillo que el borde del panel enfocado, a proposito: `#fde047`
@@ -202,6 +436,12 @@
       .fila.no-disponible .nombre {
         color: var(--no-disponible);
         cursor: default;
+      }
+
+      /* La ruta se apaga con el nombre: dejarla en `texto-tenue` la haria mas
+         legible que el nombre que tiene encima. */
+      .fila.no-disponible .ruta-linea {
+        color: var(--no-disponible);
       }
 
       .icono {
@@ -239,9 +479,14 @@
       }
 
       /* Con `opacity` y no con `visibility`, que quitaria el boton del recorrido
-         del tabulador. */
+         del tabulador. Sigue ocupando su sitio siempre, que es lo que evita que la
+         fila entera se recoloque al pasar el raton por encima.
+
+         El contrato no lo nombra al repartir el ancho de la fila -ni la maqueta lo
+         dibuja-, asi que se queda donde ya estaba: el ultimo por la derecha, con el
+         contador a su izquierda. Quitarlo dejaria la lista sin forma de olvidar un
+         proyecto. */
       .quitar {
-        margin-right: 4px;
         opacity: 0;
       }
 
@@ -386,29 +631,73 @@
       #vacio-boton[hidden] {
         display: none;
       }
+
+      /* ---------------------------------------------------- franja de estado */
+
+      /* Superficie 4, a todo el ancho de la ventana y por debajo de la barra y de la
+         rejilla. CPU y memoria DE LA MAQUINA ENTERA, no por panel: atribuir procesos
+         a un panel miente por debajo en cuanto uno se desprende del arbol, y lo que
+         se quiere saber es que se esta comiendo la maquina.
+
+         SE SEPARA POR COLOR Y POR CANTO A LA VEZ, y las dos cosas hacen falta. La
+         version anterior de la barra se apoyo solo en el canto y acabo a 1.01 : 1 de
+         la rejilla: no era poco contraste, era la misma superficie. Aqui no se
+         repite, asi que ni el fondo ni el `border-top` sobran. */
+      #pie {
+        display: flex;
+        flex: 0 0 28px;
+        align-items: center;
+        box-sizing: border-box;
+        gap: 18px;
+        height: 28px;
+        padding: 0 14px;
+        background: var(--pie-fondo);
+        border-top: 1px solid var(--pie-borde);
+        color: var(--pie-valor);
+        font-family: var(--fuente-mono);
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+
+      /* La etiqueta va en `pie-etiqueta` y la cifra en `pie-valor`: se leen como una
+         sola linea porque el rotulo pesa menos que el numero. */
+      #pie i {
+        color: var(--pie-etiqueta);
+        font-style: normal;
+      }
     </style>
   </head>
   <body>
     <div id="app">
-      <aside id="barra">
-        <div id="contenido">
-          <div id="cabecera">
-            <span id="titulo">Proyectos</span>
-            <button id="anadir" class="icono" type="button" title="Anadir un proyecto">+</button>
+      <div id="cuerpo">
+        <aside id="barra">
+          <div id="contenido">
+            <div id="cabecera">
+              <span id="titulo">Proyectos</span>
+              <button id="anadir" class="icono" type="button" title="Anadir un proyecto">+</button>
+            </div>
+            <ul id="lista"></ul>
+            <p id="error"></p>
           </div>
-          <ul id="lista"></ul>
-          <p id="error"></p>
-        </div>
-      </aside>
-      <main id="zona">
-        <!-- El boton va debajo del texto y separado 16px, y solo aparece en tres de
-             los cinco estados vacios: quien decide cual es `pintarVacio`, en
-             panel.js, que es tambien quien sabe que hace al pulsarlo. -->
-        <div id="vacio" hidden>
-          <p id="vacio-texto"></p>
-          <button id="vacio-boton" type="button" hidden></button>
-        </div>
-      </main>
+        </aside>
+        <main id="zona">
+          <!-- El boton va debajo del texto y separado 16px, y solo aparece en tres de
+               los cinco estados vacios: quien decide cual es `pintarVacio`, en
+               panel.js, que es tambien quien sabe que hace al pulsarlo. -->
+          <div id="vacio" hidden>
+            <p id="vacio-texto"></p>
+            <button id="vacio-boton" type="button" hidden></button>
+          </div>
+        </main>
+      </div>
+      <!-- La franja de estado. Arranca con guiones y no con ceros: si los contadores
+           de rendimiento no se pueden abrir, `maquina:uso` no se emite nunca y un
+           `0%` seria una cifra falsa en vez de un hueco honrado. -->
+      <footer id="pie">
+        <span><i>CPU</i> <span id="pie-cpu">—</span></span>
+        <span><i>RAM</i> <span id="pie-ram">—</span></span>
+      </footer>
     </div>
     <script type="module" src="panel.js"></script>
   </body>
