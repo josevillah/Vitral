@@ -136,13 +136,23 @@ async function principal() {
   const rama = repo ? git.ramaActual(raiz) : null;
   if (resolver(guardarrailes.revisarRama({ repo, rama, banderas, rutaBoceto }))) return 1;
 
+  // Antes de leer el boceto a proposito: si esta fuera de la raiz, da igual si
+  // ademas esta bien escrito. Aborta tambien con --seco, a diferencia del
+  // guardarrail de rama: aqui el dano es que el modo seco imprimiria prompts con
+  // las rutas resueltas contra la raiz equivocada, que es justo lo que se quiere
+  // cazar antes de gastar.
+  if (resolver(guardarrailes.revisarBoceto({ rutaBoceto, raiz }))) return 1;
+
   const boceto = leerBoceto(rutaBoceto);
   const plomo = leerPlomo(path.join(path.dirname(rutaBoceto), 'plomo'));
 
   let tareas = boceto.tareas;
   if (banderas.solo) tareas = cerrarDependencias(tareas, banderas.solo);
 
-  const { handoffs, incompletos, fechas } = cargarHandoffs(raiz, tareas);
+  // Antes que prepararRegistro, siempre: lee el sello de la tanda anterior, y si
+  // el registro lo reescribiera primero, coincidiria siempre.
+  const { handoffs, incompletos, fechas, otraTanda } =
+    cargarHandoffs(raiz, tareas, boceto.nombre);
 
   // El caso normal de --solo es "esta tarea fallo, relanzala", no "reconstruye
   // todo desde cero". Una dependencia que ya dejo handoff esta hecha: repetirla
@@ -168,6 +178,7 @@ async function principal() {
       ? { id: banderas.solo, ejecutan: ejecutan.length,
           saltadas: saltadas.length, rehacer: banderas.rehacer }
       : null,
+    otraTanda,
   });
 
   resolver(guardarrailes.revisarPresupuestos(ejecutan));
@@ -180,7 +191,7 @@ async function principal() {
 
   if (banderas.seco) { corrida.ensayar(plan); return 0; }
 
-  prepararRegistro(raiz);
+  prepararRegistro(raiz, boceto.nombre);
   const estadoAntes = repo ? git.estadoGit(raiz) : new Set();
   const arranque = Date.now();
 

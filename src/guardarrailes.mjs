@@ -55,6 +55,33 @@ export function revisarRama({ repo, rama, banderas, rutaBoceto }) {
   return [];
 }
 
+// La raiz sale de process.cwd() y de ella salen git, las rutas de las tareas y
+// donde se escribe .vitral/. Un boceto de otro proyecto se ejecutaria contra el
+// directorio actual sin que nadie diga nada: contratos de un proyecto, raiz de
+// otro. Las rutas se resolverian contra la raiz equivocada y los handoffs se
+// escribirian en el proyecto equivocado.
+//
+// Que la raiz sea el cwd es lo correcto y no se cambia: quien lanza un proceso
+// decide su directorio de trabajo, y la aplicacion lanzara el motor con el cwd
+// puesto en el proyecto. Con esa primitiva, un boceto fuera de la raiz no es un
+// uso avanzado: es siempre un error.
+//
+// No mira si el archivo existe: de eso ya se encarga leerBoceto con su error.
+export function revisarBoceto({ rutaBoceto, raiz }) {
+  // La misma cuenta que revisarCwd: resolver contra la raiz y mirar si lo
+  // relativo empieza por "..". Sigue siendo absoluto solo si apunta a otra
+  // unidad de Windows, que tambien es estar fuera.
+  const absoluto = path.resolve(raiz, rutaBoceto);
+  const relativo = path.relative(raiz, absoluto).split(path.sep).join('/');
+  if (!(relativo === '..' || relativo.startsWith('../') || path.isAbsolute(relativo))) return [];
+
+  // La ruta se muestra tal como la escribio la persona, sin normalizar, que es
+  // como la va a reconocer.
+  return [aborta(`el boceto "${rutaBoceto}" cae fuera del repositorio.`,
+    'sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.\n        ' +
+    'corre vitral desde el proyecto al que pertenece el boceto')];
+}
+
 // Dos vidrios de la misma ola escribiendo en el mismo terreno no producen un
 // error: producen perdida silenciosa de trabajo, porque el ultimo en guardar
 // pisa al otro y nadie se entera.

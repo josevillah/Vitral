@@ -75,7 +75,7 @@ export function imprimirAyuda() {
 // Cabecera de la corrida
 // ---------------------------------------------------------------------------
 
-export function cabecera({ nombre, rutaBoceto, rama, plomo, olas, solo }) {
+export function cabecera({ nombre, rutaBoceto, rama, plomo, olas, solo, otraTanda }) {
   const pesoPlomo = Buffer.byteLength(plomo.texto, 'utf8');
   const cuentaPlomo = plomo.archivos.length === 1
     ? '1 archivo'
@@ -86,6 +86,17 @@ export function cabecera({ nombre, rutaBoceto, rama, plomo, olas, solo }) {
   imprimir(`${C.tenue}boceto ${rutaBoceto} · rama ${rama || 'sin git'} · ` +
            `plomo ${cuentaPlomo} (${(pesoPlomo / 1024).toFixed(1)} KB) · ` +
            `olas ${olas.map((ola) => ola.length).join(' -> ')}${C.fin}`);
+
+  // Los handoffs que habia en disco eran de otra tanda y se ignoran. Va justo
+  // debajo de la del boceto, con la misma sangria de ocho espacios que las
+  // sugerencias, porque es una nota sobre lo que se acaba de leer del disco.
+  if (otraTanda) {
+    const cuantos = otraTanda.cuantos === 1
+      ? '1 handoff en disco es'
+      : `${otraTanda.cuantos} handoffs en disco son`;
+    const cierre = otraTanda.cuantos === 1 ? 'se ignora' : 'se ignoran';
+    imprimir(`        ${C.tenue}${cuantos} de la tanda "${otraTanda.nombre}": ${cierre}${C.fin}`);
+  }
 
   if (!solo) return;
   const cuenta = [`${solo.ejecutan} ${solo.ejecutan === 1 ? 'tarea' : 'tareas'}`];

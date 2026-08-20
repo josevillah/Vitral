@@ -145,7 +145,7 @@ Todo lo que ve el usuario.
 formatearDuracion(ms) -> string          formatearCosto(usd) -> string
 imprimirError(mensaje, sugerencia)       imprimirAviso(mensaje)
 imprimirAyuda()
-cabecera({ nombre, rutaBoceto, rama, plomo, olas, solo })
+cabecera({ nombre, rutaBoceto, rama, plomo, olas, solo, otraTanda })
 lineasSaltadas(saltadas, ancho, fechas)
 imprimirPrompt(indice, tarea, prompt)    finEnsayo()
 cabeceraOla(indice, total, cuantos)      lineaArranque(tarea, ancho)
@@ -154,6 +154,19 @@ lineaCierre({ tarea, ancho, resultado, huboHandoff, rutaMarca, raiz })
 avisoFallo(fallidas, indice)
 resumen({ costoTotal, ms, repo, diff, sinRastrear, fuera })
 ```
+
+`otraTanda` es el campo que le llega a `cabecera` desde `cargarHandoffs`. Cuando
+no es `null`, la cabecera imprime **una linea mas**, justo debajo de la del
+boceto y con la misma sangria de ocho espacios que usan las sugerencias:
+
+```
+vitral · El preambulo no puede mentir sobre el paralelismo
+boceto .vitral/boceto.json · rama feat/x · plomo 2 archivos (33.1 KB) · olas 2 -> 1
+        3 handoffs en disco son de la tanda "Validar presupuesto, modelo y cwd": se ignoran
+```
+
+En singular, `1 handoff en disco es de la tanda "...": se ignora`. Con
+`otraTanda` en `null` no se imprime nada: la cabecera es la de siempre.
 
 **No le corresponde:** decidir nada. No aborta, no llama a `process.exit`, no
 lee el disco, no pregunta a git, no calcula lo que muestra. Recibe datos ya
@@ -330,8 +343,8 @@ plantilla del prompt.
 El unico modulo que conoce la disposicion de `.vitral/`.
 
 ```
-prepararRegistro(raiz)
-cargarHandoffs(raiz, tareas) -> { handoffs: Map, incompletos: Map, fechas: Map }
+prepararRegistro(raiz, tanda)
+cargarHandoffs(raiz, tareas, tanda) -> { handoffs: Map, incompletos: Map, fechas: Map, otraTanda }
 guardarLog(raiz, tarea, prompt, resultado)
 guardarHandoff(raiz, id, texto)
 escribirMarcaIncompleta(raiz, tarea, resultado) -> ruta
@@ -339,11 +352,60 @@ borrarMarcaIncompleta(raiz, id)
 ```
 
 Disposicion actual: `logs/<id>.json`, `handoffs/<id>.md`,
-`handoffs/<id>.INCOMPLETO.md`. Si cambia, cambia aqui y en ningun otro sitio.
+`handoffs/<id>.INCOMPLETO.md`, `handoffs/.tanda`. Si cambia, cambia aqui y en
+ningun otro sitio. El sello es un archivo mas de `.vitral/`, asi que entra por la
+misma puerta que los demas: la disposicion la conoce este modulo y solo este.
 
 `cargarHandoffs` devuelve **dos mapas separados** a proposito: un handoff de
 verdad no es lo mismo que la marca de una tarea que se corto, y confundirlos
 borraria marcas que todavia hacen falta.
+
+#### El sello de tanda
+
+`.vitral/handoffs/<id>.md` se guarda por id de tarea, y los ids se repiten entre
+tandas. Nada en el disco decia de que tanda era un handoff, asi que un `--solo`
+podia saltarse una dependencia que nunca corrio en esta tanda e inyectar su
+handoff viejo en el prompt del dependiente, con voz de trabajo recien hecho.
+
+**El sello es `.vitral/handoffs/.tanda`, con el nombre del boceto dentro.** Texto
+plano, una linea, terminada en salto de linea, y se compara recortando los
+espacios de los extremos. Vive dentro de `handoffs/`, que ya esta ignorado por
+git. `tanda` es el `nombre` del boceto, que `boceto.mjs` garantiza que siempre
+existe.
+
+`prepararRegistro` lo escribe, ademas de lo que ya hacia. `cargarHandoffs` lo lee
+y decide:
+
+| Situacion | Que pasa |
+|---|---|
+| El sello dice lo mismo que esta corrida | Los handoffs valen. Todo como antes |
+| El sello dice otra cosa | Los handoffs y las marcas de incompleto son de otra tanda: se tratan como ausentes, y se dice en la cabecera |
+| No hay sello | Los handoffs valen. Es el caso de un proyecto anterior al sello, y descartarle el trabajo bueno seria peor que el fallo que esto arregla |
+
+Los archivos que se ignoran **no se borran**: borrarlos es del cierre de tanda, no
+de una corrida que solo queria leerlos.
+
+`otraTanda` es `null` cuando no hay nada que decir, y si no:
+
+```
+{ nombre: <lo que dice el sello>, cuantos: <cuantos archivos se ignoraron> }
+```
+
+`cuantos` cuenta los handoffs y las marcas de incompleto que existian en disco
+**para los ids de esta corrida** y se descartaron. Solo esos: un handoff de un id
+que esta corrida no usa no la afecta y no se cuenta. Si el sello no coincide pero
+ningun id de esta corrida tenia handoff, `otraTanda` es `null`.
+
+Dos cosas de orden que no se pueden invertir:
+
+- `cargarHandoffs` se llama **antes** que `prepararRegistro`. Si el sello se
+  escribiera antes de leerlo, siempre coincidiria y esto no serviria de nada.
+- Como `--seco` no llama a `prepararRegistro`, el modo seco **lee el sello pero no
+  lo escribe**: dice exactamente lo que diria la corrida real, sin tocar el disco.
+
+Efecto lateral buscado: al tratarse como ausentes, el aviso de sobrescritura deja
+de dispararse por handoffs huerfanos **sin tocar `revisarSobrescritura`**, porque
+lee esos mismos mapas.
 
 La marca de corte distingue morir por dinero de morir por tiempo, porque son dos
 diagnosticos distintos: el presupuesto corta limpio entre turnos y se sabe lo
@@ -355,6 +417,7 @@ gastado; el timeout mata a la fuerza y no se sabe si la tarea iba bien.
 
 ```
 revisarRama({ repo, rama, banderas, rutaBoceto }) -> veredicto[]
+revisarBoceto({ rutaBoceto, raiz }) -> veredicto[]
 revisarSolapamientos(olas, raiz) -> veredicto[]
 revisarPresupuestos(ejecutan) -> veredicto[]
 revisarSobrescritura({ ejecutan, raiz, repo, banderas, handoffs, incompletos }) -> veredicto[]
@@ -374,6 +437,33 @@ que no existen; la forma —cadena no vacia y relativa— ya viene comprobada de
 `normalizarRuta`: resolver contra la raiz y mirar si el relativo empieza por `..`.
 Un `cwd` que apunta a un archivo que existe cuenta como "no existe": no sirve de
 directorio de trabajo y el agente fallaria igual al arrancar.
+
+`revisarBoceto` devuelve `aborta` cuando el boceto resuelve **fuera de la raiz**.
+La cuenta es la misma que usa `revisarCwd`: resolver contra la raiz y mirar si lo
+relativo empieza por `..`, contando tambien el caso de otra unidad de Windows,
+que tambien es estar fuera. No mira si el archivo existe: de eso ya se encarga
+`leerBoceto` con su propio error, asi que una ruta que no existe pero cae dentro
+de la raiz no le arranca ningun veredicto. El mensaje, literal:
+
+```
+el boceto "C:/otro/.vitral/boceto.json" cae fuera del repositorio.
+        sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.
+        corre vitral desde el proyecto al que pertenece el boceto
+```
+
+La ruta se muestra **tal como la escribio la persona**, sin normalizar, que es
+como la va a reconocer.
+
+`vitral.mjs` lo llama **despues de `revisarRama` y antes de `leerBoceto`**: si el
+boceto esta fuera, da igual si ademas esta bien escrito. Y **aborta tambien con
+`--seco`**, a diferencia del guardarrail de rama, que en seco solo avisa porque el
+modo seco no ejecuta nada: aqui el dano es que el modo seco imprimiria prompts con
+las rutas resueltas contra la raiz equivocada, que es justo lo que se quiere cazar
+antes de gastar.
+
+Que `raiz` sea `process.cwd()` es la primitiva, y no se cambia: quien lanza un
+proceso decide su directorio de trabajo. Con esa primitiva, un boceto fuera de la
+raiz no es un uso avanzado, es siempre un error.
 
 **No le corresponde:** imprimir, terminar el proceso, modificar el plan.
 
@@ -435,12 +525,14 @@ dan de verdad:
 | Cambiar lo que se le dice al agente en el prompt | `prompt.mjs`, y nada mas |
 | Cambiar el bloque `## Handoff` que se le pide | `prompt.mjs`: la instruccion y `extraerHandoff` se cambian juntas o dejan de encajar |
 | Cambiar lo que dice la marca de corte incompleto | `registro.mjs` |
-| Cambiar donde o con que nombre se guarda algo en `.vitral/` | `registro.mjs`, y nada mas |
+| Cambiar donde o con que nombre se guarda algo en `.vitral/` | `registro.mjs`, y nada mas. Tambien el sello `handoffs/.tanda` |
+| Cambiar cuando un handoff en disco vale y cuando se ignora | `registro.mjs`: lo decide `cargarHandoffs` con el sello. `salida.mjs` solo pinta el `otraTanda` que salga de ahi |
 | Anadir un campo al boceto | `boceto.mjs` lo valida, y quien lo consuma: `agentes.mjs` si acaba en un flag, `proceso.mjs` si cambia como se lanza, `prompt.mjs` si el agente lo lee |
 | Cambiar que aborta y que solo avisa | `guardarrailes.mjs`. Solo toca `vitral.mjs` si cambia el orden en que se resuelven |
+| Anadir una comprobacion previa nueva | `guardarrailes.mjs` la escribe y devuelve veredictos; `vitral.mjs` la llama en su sitio del orden y decide si el modo seco la respeta |
 | Cambiar que cuenta como solape o como "fuera de ruta" | `rutas.mjs` la regla, `guardarrailes.mjs` el juicio |
 | Cambiar como se agrupan las olas | `olas.mjs` |
-| Cambiar que se salta con `--solo` | `vitral.mjs`: decidir que se ejecuta es parte de armar el plan |
+| Cambiar que se salta con `--solo` | `vitral.mjs`: decidir que se ejecuta es parte de armar el plan. Pero **que handoffs hay** se lo da `registro.mjs`, que ya descarta los de otra tanda |
 | Cambiar como se lanza o se mata un proceso, o el timeout | `proceso.mjs` |
 | Cambiar la cadencia o el momento del latido | `corrida.mjs` decide cuando, `salida.mjs` como se ve |
 | Anadir un dato al resumen final | `git.mjs` si hay que calcularlo, `salida.mjs` como se ve, `vitral.mjs` los une |

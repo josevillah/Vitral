@@ -19,31 +19,81 @@ const rutaHandoff = (raiz, id) => path.join(dirHandoffs(raiz), `${id}.md`);
 const rutaMarca = (raiz, id) => path.join(dirHandoffs(raiz), `${id}.INCOMPLETO.md`);
 const rutaHistorial = (raiz) => path.join(raiz, '.vitral', 'historial.jsonl');
 
-export function prepararRegistro(raiz) {
+// El sello de tanda. Los handoffs se guardan por id de tarea y los ids se
+// repiten entre tandas, asi que sin esto nada en el disco dice de que tanda es
+// un handoff: un --solo puede saltarse una dependencia que nunca corrio en esta
+// tanda e inyectar su handoff viejo en el prompt del dependiente, con voz de
+// trabajo recien hecho.
+//
+// Lo mas barato que ya existe para identificar una tanda es el `nombre` del
+// boceto, que boceto.mjs garantiza que siempre esta. El sello es un archivo de
+// una linea dentro de handoffs/, que ya esta ignorado por git.
+const rutaTanda = (raiz) => path.join(dirHandoffs(raiz), '.tanda');
+
+export function prepararRegistro(raiz, tanda) {
   mkdirSync(dirLogs(raiz), { recursive: true });
   mkdirSync(dirHandoffs(raiz), { recursive: true });
+  // Se escribe al preparar el registro, o sea despues de que cargarHandoffs ya
+  // leyo el anterior. Si se escribiera antes de leerlo, siempre coincidiria y
+  // esto no serviria de nada.
+  if (typeof tanda === 'string' && tanda.trim() !== '') {
+    writeFileSync(rutaTanda(raiz), `${tanda}\n`);
+  }
+}
+
+// El nombre de la tanda que dejo estos handoffs, o null si no hay sello. Se
+// compara recortando los espacios de los extremos.
+function leerSello(raiz) {
+  const archivo = rutaTanda(raiz);
+  if (!existsSync(archivo)) return null;
+  return readFileSync(archivo, 'utf8').trim();
 }
 
 // Lo que dejaron corridas anteriores. Se separan los dos mapas: un handoff de
 // verdad no es lo mismo que la marca de una tarea que se corto, y confundirlos
 // borraria marcas que todavia hacen falta.
-export function cargarHandoffs(raiz, tareas) {
+//
+// `tanda` es el `nombre` del boceto de esta corrida. Tres reglas, y las tres
+// importan:
+//
+//   - el sello dice lo mismo: los handoffs valen, todo como siempre;
+//   - el sello dice otra cosa: los handoffs y las marcas son de otra tanda y se
+//     tratan como ausentes;
+//   - no hay sello: los handoffs valen. Es un proyecto que ya venia funcionando
+//     antes de que el sello existiera, y descartarle el trabajo bueno seria
+//     peor que el fallo que esto arregla.
+//
+// Lo que se ignora no se borra: borrar es del cierre de tanda, no de una corrida
+// que solo queria leer.
+export function cargarHandoffs(raiz, tareas, tanda) {
   const handoffs = new Map();
   const incompletos = new Map();
   const fechas = new Map();
+
+  const sello = leerSello(raiz);
+  const ajena = sello !== null && sello !== String(tanda ?? '').trim();
+  let ignorados = 0;
 
   for (const tarea of tareas) {
     const bueno = rutaHandoff(raiz, tarea.id);
     const marca = rutaMarca(raiz, tarea.id);
     if (existsSync(bueno)) {
+      if (ajena) { ignorados++; continue; }
       handoffs.set(tarea.id, readFileSync(bueno, 'utf8').trim());
       fechas.set(tarea.id, statSync(bueno).mtime);
     } else if (existsSync(marca)) {
+      // Una marca de otra tanda miente lo mismo que un handoff de otra tanda.
+      if (ajena) { ignorados++; continue; }
       incompletos.set(tarea.id, readFileSync(marca, 'utf8').trim());
     }
   }
 
-  return { handoffs, incompletos, fechas };
+  // Solo cuentan los ids de esta corrida: un handoff de un id que esta corrida
+  // no usa no la afecta y no hay nada que decir de el. Si no quedo ninguno,
+  // tampoco hay nada que decir y `otraTanda` es null.
+  const otraTanda = ajena && ignorados > 0 ? { nombre: sello, cuantos: ignorados } : null;
+
+  return { handoffs, incompletos, fechas, otraTanda };
 }
 
 export function guardarLog(raiz, tarea, prompt, resultado) {

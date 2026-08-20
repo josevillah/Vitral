@@ -14,7 +14,7 @@
 // aqui no hay motor, hay un banco de pruebas.
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,6 +53,31 @@ function bocetoSuelto(dir, nombre, contenido) {
   const ruta = path.join(dir, '.vitral', nombre);
   writeFileSync(ruta, JSON.stringify(contenido, null, 2));
   return path.join('.vitral', nombre);
+}
+
+// El escenario del sello de tanda. Los handoffs se guardan por id de tarea y
+// nada en el disco dice de que tanda son, salvo `.vitral/handoffs/.tanda`. Para
+// montar esto sin correr una tanda entera hay que escribir a mano el handoff y
+// el sello: es la unica forma.
+//
+// `sello` a null es el repositorio que ya venia funcionando antes de que el
+// sello existiera.
+const TANDA_DE_AHORA = 'La tanda de esta corrida';
+const TANDA_VIEJA = 'Una tanda de hace dos semanas';
+const RASTRO_VIEJO = 'lo que se hizo en una tanda que ya paso';
+const HANDOFF_VIEJO = `## Handoff\n\n**Hice:** ${RASTRO_VIEJO}.`;
+
+function repoSellado(nombre, sello) {
+  const dir = montarRepo(nombre, 'trabajo/checks');
+  const boceto = bocetoSuelto(dir, 'tanda.json', { nombre: TANDA_DE_AHORA, tareas: [
+    { id: 'base', rutas: ['app/base/'], prompt: 'x' },
+    { id: 'encima', necesita: ['base'], rutas: ['app/encima/'], prompt: 'y' },
+  ] });
+  const handoffs = path.join(dir, '.vitral', 'handoffs');
+  mkdirSync(handoffs, { recursive: true });
+  writeFileSync(path.join(handoffs, 'base.md'), `${HANDOFF_VIEJO}\n`);
+  if (sello !== null) writeFileSync(path.join(handoffs, '.tanda'), `${sello}\n`);
+  return { dir, boceto, sello: path.join(handoffs, '.tanda') };
 }
 
 // Corre vitral y devuelve lo que dijo. stdout y stderr van juntos porque los
@@ -368,6 +393,111 @@ const checks = [
       }
     }
     return null;
+  }],
+
+  // Los cuatro que siguen cubren lo que el motor daba por sentado del disco: que
+  // el boceto que le pasan es de este proyecto, y que los handoffs que encuentra
+  // son de esta tanda. Todos con --seco: los dos defectos se cazan antes de
+  // lanzar nada.
+
+  ['un boceto de otro proyecto aborta, tambien en seco', () => {
+    // La raiz sale del cwd, asi que un boceto de fuera se ejecutaria contra el
+    // directorio actual: rutas resueltas contra la raiz equivocada y handoffs
+    // escritos en el proyecto equivocado. La ruta sale en el mensaje tal como se
+    // escribio, sin normalizar.
+    const fuera = [
+      path.join('..', 'principal', '.vitral', 'boceto.json'), // sube por encima de la raiz
+      path.join(raiz, 'ejemplo', 'boceto.json'),              // absoluta, y de otro repositorio
+    ];
+    for (const ruta of fuera) {
+      for (const banderas of [['--seco'], []]) {
+        const { codigo, texto } = vitral(trabajo, ...banderas, '--boceto', ruta);
+        const como = banderas.length ? '--seco' : 'sin --seco';
+        if (codigo !== 1) return `(${como}) esperaba codigo 1, salio ${codigo}`;
+        if (!texto.includes(`el boceto "${ruta}" cae fuera del repositorio.`)) {
+          return `(${como}) aborto, pero sin nombrar el boceto de fuera: ${ruta}`;
+        }
+      }
+    }
+    // Y el caso normal sigue pasando: un boceto de dentro no dice nada de esto.
+    const dentro = vitral(trabajo, '--seco');
+    if (dentro.codigo !== 0) return `un boceto de dentro aborto con codigo ${dentro.codigo}`;
+    return dentro.texto.includes('cae fuera del repositorio')
+      ? 'un boceto de dentro de la raiz tambien se rechaza' : null;
+  }],
+
+  ['con un sello de otra tanda los handoffs en disco se ignoran', () => {
+    const { dir, boceto, sello } = repoSellado('sello-ajeno', TANDA_VIEJA);
+    const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}`;
+    if (!texto.includes(`1 handoff en disco es de la tanda "${TANDA_VIEJA}": se ignora`)) {
+      return 'la cabecera no dice que el handoff de disco es de otra tanda';
+    }
+
+    const prompt = promptDe(texto, 'encima');
+    if (prompt === null) return 'no salio el prompt de encima';
+    if (prompt.includes(RASTRO_VIEJO)) {
+      return 'el handoff de la tanda vieja se colo en el prompt del dependiente';
+    }
+    if (!prompt.includes('--- "base" no dejo handoff ---')) {
+      return 'el handoff ignorado no se cuenta como ausencia';
+    }
+
+    // El seco lee el sello pero no lo escribe, y nada se borra: ignorar no es
+    // limpiar, que eso es del cierre de tanda.
+    if (readFileSync(sello, 'utf8').trim() !== TANDA_VIEJA) {
+      return '--seco reescribio el sello';
+    }
+    return existsSync(path.join(dir, '.vitral', 'handoffs', 'base.md')) ? null
+      : '--seco borro el handoff que solo tenia que ignorar';
+  }],
+
+  ['sin sello los handoffs en disco se siguen usando', () => {
+    // El caso de migracion: un proyecto que ya venia funcionando antes de que el
+    // sello existiera. Descartarle el trabajo bueno seria peor que el fallo que
+    // el sello arregla, asi que sin sello los handoffs valen.
+    const { dir, boceto } = repoSellado('sin-sello', null);
+    const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}`;
+    if (texto.includes('de la tanda "')) {
+      return 'sin sello no hay nada que ignorar, y la cabecera dice que si';
+    }
+
+    const prompt = promptDe(texto, 'encima');
+    if (prompt === null) return 'no salio el prompt de encima';
+    if (!prompt.includes('--- handoff de "base" ---')) {
+      return 'el handoff de disco no entro en el prompt del dependiente';
+    }
+    return prompt.includes(RASTRO_VIEJO) ? null
+      : 'el encabezado del handoff entro, pero no su contenido';
+  }],
+
+  ['con un sello de otra tanda, --solo ejecuta la dependencia en vez de saltarsela', () => {
+    // Este es el dano grave del defecto: saltarse una dependencia que nunca corrio
+    // en esta tanda e inyectar su handoff viejo con voz de trabajo recien hecho.
+    const ajeno = repoSellado('sello-y-solo', TANDA_VIEJA);
+    const conSello = vitral(ajeno.dir, '--seco', '--solo', 'encima', '--boceto', ajeno.boceto);
+    if (conSello.codigo !== 0) return `(sello ajeno) esperaba codigo 0, salio ${conSello.codigo}`;
+    if (!conSello.texto.includes('--solo encima: 2 tareas')) {
+      return '(sello ajeno) no dijo que iba a ejecutar las dos tareas';
+    }
+    if (conSello.texto.includes('saltada')) {
+      return '(sello ajeno) se salto una dependencia con un handoff que no es de esta tanda';
+    }
+    if (promptDe(conSello.texto, 'base') === null) {
+      return '(sello ajeno) la dependencia no llego a armar su prompt: no se ejecuta';
+    }
+
+    // Y el contraste, que es lo que da valor a lo de arriba: sin sello, el mismo
+    // --solo si se salta la dependencia. Si esto dejara de saltarse, el check de
+    // arriba pasaria por el motivo equivocado.
+    const migrado = repoSellado('solo-sin-sello', null);
+    const sinSello = vitral(migrado.dir, '--seco', '--solo', 'encima', '--boceto', migrado.boceto);
+    if (!sinSello.texto.includes('--solo encima: 1 tarea, 1 saltada (handoff en disco)')) {
+      return '(sin sello) el mismo --solo tendria que saltarse la dependencia y no lo hizo';
+    }
+    return promptDe(sinSello.texto, 'base') === null ? null
+      : '(sin sello) la dio por saltada y aun asi armo su prompt';
   }],
 ];
 

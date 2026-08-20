@@ -38,7 +38,9 @@ export const AGENTES = {
         '--output-format', 'json',
         '--permission-mode', 'bypassPermissions',
       ];
-      if (tarea.modelo) args.push('--model', String(tarea.modelo));
+      if (tarea.modelo) args.push('--model', tarea.modelo);
+      // String() aqui no sobra: presupuesto es un number y spawn quiere cadenas.
+      // Node convierte los numeros el solo, pero no lo promete en su documentacion.
       if (tarea.presupuesto) args.push('--max-budget-usd', String(tarea.presupuesto));
       return args;
     },
@@ -74,7 +76,7 @@ export const AGENTES = {
     args(tarea) {
       const args = ['run', '--format', 'json', '--auto'];
       // El modelo va como proveedor/modelo, p.ej. anthropic/claude-sonnet-4-5.
-      if (tarea.modelo) args.push('--model', String(tarea.modelo));
+      if (tarea.modelo) args.push('--model', tarea.modelo);
       return args;
     },
     parse(salida, codigo) {

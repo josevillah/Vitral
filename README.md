@@ -58,7 +58,8 @@ nuevo sobrescribiria trabajo que estaba bien.
 
 | Estado de la dependencia | Que pasa |
 |---|---|
-| Tiene `<id>.md` | Se salta. Su handoff se inyecta igual en quien dependa de ella |
+| Tiene `<id>.md` de esta tanda | Se salta. Su handoff se inyecta igual en quien dependa de ella |
+| Tiene `<id>.md` de otra tanda | Se ejecuta: para vitral es como si no lo tuviera (mas abajo) |
 | Tiene `<id>.INCOMPLETO.md` | Se ejecuta: quedo a medias, no esta hecha |
 | No tiene nada | Se ejecuta |
 
@@ -74,6 +75,41 @@ nombraste es porque la quieres.
 
 `--rehacer` desactiva el salto y reejecuta el arbol entero.
 
+### Un handoff de otra tanda se ignora
+
+Los handoffs se guardan por id de tarea, y **los ids se repiten entre tandas**:
+`documentacion` o `checks` pueden ser de dos bocetos distintos, y el disco no
+dice de cual. Sin eso, un `--solo` podia saltarse una dependencia que nunca corrio
+en esta tanda e inyectar su handoff viejo en el prompt, con voz de trabajo recien
+hecho.
+
+Por eso vitral sella el directorio: `.vitral/handoffs/.tanda` guarda el `nombre`
+del boceto de la ultima corrida. Al arrancar lo compara con el de la corrida
+actual.
+
+| El sello | Que pasa |
+|---|---|
+| Dice lo mismo que esta corrida | Los handoffs valen. Todo normal |
+| Dice otra cosa | Los handoffs y las marcas `INCOMPLETO` **son de otra tanda**: se tratan como ausentes y se dice en la cabecera |
+| No existe | Los handoffs valen. Es un proyecto anterior al sello, y tirarle trabajo bueno seria peor que el fallo que esto arregla |
+
+Cuando el sello no coincide, la cabecera lo dice antes de lanzar nada:
+
+```
+vitral · El preambulo no puede mentir sobre el paralelismo
+boceto .vitral/boceto.json · rama feat/x · plomo 2 archivos (33.1 KB) · olas 2 -> 1
+        3 handoffs en disco son de la tanda "Validar presupuesto, modelo y cwd": se ignoran
+```
+
+En singular, `1 handoff en disco es de la tanda "...": se ignora`. Se cuentan solo
+los handoffs y marcas de los ids que esta corrida usa: uno de un id que no
+aparece en el boceto no la afecta y no se nombra.
+
+**No se borra nada.** Vitral los ignora y sigue; limpiarlos es cosa del cierre de
+tanda. Con `--solo`, una dependencia cuyo handoff es de otra tanda no se salta:
+se ejecuta de verdad. Y `--seco` lee el sello pero no lo escribe, asi que dice
+exactamente lo que diria la corrida real sin tocar el disco.
+
 Estructura de trabajo:
 
 ```
@@ -83,6 +119,7 @@ Estructura de trabajo:
   logs/<id>.json              salida cruda     (artefacto, ignorado)
   handoffs/<id>.md            handoff extraido (artefacto, ignorado)
   handoffs/<id>.INCOMPLETO.md marca de corte   (artefacto, ignorado)
+  handoffs/.tanda             sello de tanda   (artefacto, ignorado)
 ```
 
 El plomo se lee del directorio del boceto: con `--boceto ejemplo/boceto.json`
@@ -253,8 +290,25 @@ bypassPermissions`). Por eso, antes de lanzar nada:
 - Si no hay repositorio git, **aborta**: sin git no se sabe en que rama estas ni
   hay forma de deshacer lo que escriban. Se puede forzar con `--sin-git`, que
   avisa fuerte y deja el riesgo por tu cuenta.
-- En `--seco` nada de esto aborta: solo advierte. El modo seco no ejecuta nada,
-  asi que funciona siempre, con o sin git.
+- En `--seco` ninguno de esos dos aborta: solo advierten. El modo seco no ejecuta
+  nada, asi que funciona siempre, con o sin git.
+
+**Un boceto de otro proyecto: aborta, y tambien en `--seco`.** La raiz es siempre
+el directorio desde el que corres vitral, asi que un `--boceto` que caiga fuera de
+ella resolveria las rutas de sus tareas contra esta raiz y escribiria aqui sus
+handoffs: contratos de un proyecto, repositorio de otro.
+
+```
+el boceto "C:/otro/.vitral/boceto.json" cae fuera del repositorio.
+        sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.
+        corre vitral desde el proyecto al que pertenece el boceto
+```
+
+Este si aborta en seco, al reves que el de rama: lo que hace dano aqui es que el
+modo seco imprimiria prompts con las rutas ya resueltas contra la raiz equivocada,
+que es justo lo que se quiere cazar antes de gastar. Un boceto dentro de la raiz
+—incluido `ejemplo/boceto.json`— no lo toca; y si la ruta no existe, el error de
+siempre lo da la lectura del boceto.
 
 **Reejecutar sobre trabajo existente: avisa.** Si una tarea que va a correr ya
 dejo handoff o marca de una corrida anterior, y hay archivos suyos sucios o sin
@@ -286,7 +340,7 @@ donde se revisa el plan.
 
 ## Adaptadores de agente
 
-Un objeto `AGENTES` en `vitral.mjs`, donde cada entrada define `cmd`,
+Un objeto `AGENTES` en `src/agentes.mjs`, donde cada entrada define `cmd`,
 `args(tarea)` y `parse(salida)`. Anadir un agente es anadir una entrada.
 
 **`claude`** esta verificado contra Claude Code 2.1.232:
@@ -348,7 +402,7 @@ Antes de dar por bueno un cambio en el motor:
 node pruebas/checks.mjs
 ```
 
-Dieciseis comprobaciones, cero dependencias, sale con 0 o con 1. Cada una monta su
+Veinticuatro comprobaciones, cero dependencias, sale con 0 o con 1. Cada una monta su
 propio repositorio temporal con el boceto de `ejemplo/` dentro, asi que el
 resultado no depende de en que rama estes ni de lo que quedara de una corrida
 anterior. Ninguna lanza agentes de verdad.
