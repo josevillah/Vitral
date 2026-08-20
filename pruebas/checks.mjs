@@ -217,6 +217,74 @@ const checks = [
 
     return null;
   }],
+
+  // Los cuatro que siguen cubren la validacion de "presupuesto", "modelo" y
+  // "cwd". Todos con --seco: son errores de forma o de entorno, se cazan sin
+  // lanzar ningun agente y sin gastar una ola.
+
+  ['un presupuesto que no es un numero mayor que cero aborta', () => {
+    for (const [indice, valor] of [0, -5, 'tres', '3'].entries()) {
+      const boceto = bocetoSuelto(trabajo, `presupuesto-${indice}.json`, {
+        nombre: 'presupuesto', tareas: [
+          { id: 'backend', rutas: ['app/'], presupuesto: valor, prompt: 'x' },
+        ] });
+      const { codigo, texto } = vitral(trabajo, '--seco', '--boceto', boceto);
+      const visto = JSON.stringify(valor);
+      if (codigo !== 1) return `(${visto}) esperaba codigo 1, salio ${codigo}`;
+      if (!texto.includes(`la tarea "backend" tiene un "presupuesto" invalido: ${visto}.`)) {
+        return `(${visto}) aborto, pero sin nombrar el campo y el valor`;
+      }
+    }
+    return null;
+  }],
+
+  ['un modelo que no es una cadena util aborta', () => {
+    for (const [indice, valor] of [123, '', 'con espacio'].entries()) {
+      const boceto = bocetoSuelto(trabajo, `modelo-${indice}.json`, {
+        nombre: 'modelo', tareas: [
+          { id: 'backend', rutas: ['app/'], modelo: valor, prompt: 'x' },
+        ] });
+      const { codigo, texto } = vitral(trabajo, '--seco', '--boceto', boceto);
+      const visto = JSON.stringify(valor);
+      if (codigo !== 1) return `(${visto}) esperaba codigo 1, salio ${codigo}`;
+      if (!texto.includes(`la tarea "backend" tiene un "modelo" invalido: ${visto}.`)) {
+        return `(${visto}) aborto, pero sin nombrar el campo y el valor`;
+      }
+    }
+    return null;
+  }],
+
+  ['un cwd fuera del repositorio o inexistente aborta', () => {
+    // Cada caso muere en un sitio distinto y por eso dice otra cosa: la ruta
+    // absoluta la caza boceto.mjs por la forma, las otras dos revisarCwd, que
+    // necesita el disco y la raiz.
+    const casos = [
+      ['..', 'el cwd de "backend" cae fuera del repositorio: ..'],
+      ['sub/que-no-esta', 'el cwd de "backend" no existe: sub/que-no-esta'],
+      ['C:/algo', 'la tarea "backend" tiene un "cwd" invalido: "C:/algo".'],
+    ];
+    for (const [indice, [valor, esperado]] of casos.entries()) {
+      const boceto = bocetoSuelto(trabajo, `cwd-${indice}.json`, {
+        nombre: 'cwd', tareas: [
+          { id: 'backend', rutas: ['app/'], cwd: valor, prompt: 'x' },
+        ] });
+      const { codigo, texto } = vitral(trabajo, '--seco', '--boceto', boceto);
+      if (codigo !== 1) return `(${valor}) esperaba codigo 1, salio ${codigo}`;
+      if (!texto.includes(esperado)) return `(${valor}) aborto, pero no dijo: ${esperado}`;
+    }
+    return null;
+  }],
+
+  ['los tres campos bien escritos siguen pasando', () => {
+    // El cwd tiene que existir de verdad en disco: revisarCwd lo comprueba.
+    mkdirSync(path.join(trabajo, 'sub'), { recursive: true });
+    const boceto = bocetoSuelto(trabajo, 'buenos.json', { nombre: 'buenos', tareas: [
+      { id: 'backend', rutas: ['app/'], presupuesto: 3, modelo: 'sonnet', cwd: 'sub', prompt: 'x' },
+    ] });
+    const { codigo, texto } = vitral(trabajo, '--seco', '--boceto', boceto);
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}: la validacion nueva rechaza lo que antes funcionaba`;
+    return cuenta(texto, /^prompt · ola/gm) === 1 ? null : 'no llego a armar el prompt de la tarea';
+  }],
 ];
 
 // ---------------------------------------------------------------------------

@@ -155,6 +155,7 @@ async function principal() {
   const ejecutan = tareas.filter((t) => !saltadasIds.has(t.id));
 
   const olas = calcularOlas(ejecutan, saltadasIds);
+  if (resolver(guardarrailes.revisarCwd(ejecutan, raiz))) return 1;
   if (resolver(guardarrailes.revisarSolapamientos(olas, raiz))) return 1;
 
   salida.cabecera({

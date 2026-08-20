@@ -11,6 +11,7 @@
 // 'aborta' significa "no se puede lanzar esto". 'avisa' significa "se puede, pero
 // que conste". Una lista vacia significa que no hay nada que decir.
 
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { AGENTES } from './agentes.mjs';
@@ -145,4 +146,69 @@ export function revisarSobrescritura({ ejecutan, raiz, repo, banderas, handoffs,
 
   return [avisa(`${quien} ${pisadas.map((t) => `"${t.id}"`).join(', ')}, ${cola} ` +
     'Conviene tener un commit antes.')];
+}
+
+// El cwd saca al agente de donde Vitral esta mirando. Un cwd fuera de la raiz
+// hace que las rutas declaradas se resuelvan fuera del repositorio, y ahi git no
+// ve nada: ni el guardarrail de rama, ni la revision de "fuera de ruta", ni el
+// aviso de sobrescritura cubren ese terreno. Es el unico de los tres campos con
+// consecuencias que no se pueden deshacer, por eso aborta y no avisa.
+//
+// La forma del campo (cadena no vacia, relativa) la valida boceto.mjs. Aqui solo
+// se juzga lo que necesita el disco y la raiz, que boceto.mjs no tiene.
+const FUERA_DE_RAIZ =
+  'ahi git no ve nada, asi que no hay forma de revisar ni de deshacer lo que\n' +
+  '        escriba el agente. Vitral no tiene otra red de seguridad.';
+
+const NO_EXISTE =
+  'creal antes de lanzar. Si no, el agente falla al arrancar con un ENOENT que\n' +
+  '        parece culpa del CLI y no del boceto.';
+
+// Un veredicto por problema, no uno por tarea: si varias fallan por lo mismo se
+// nombran todas en el mismo mensaje, como en revisarSolapamientos.
+const listaCwd = (tareas) =>
+  tareas.map((tarea) => `\n        "${tarea.id}": ${tarea.cwd}`).join('');
+
+export function revisarCwd(ejecutan, raiz) {
+  const fuera = [];
+  const inexistentes = [];
+
+  for (const tarea of ejecutan) {
+    // La forma ya la caza boceto.mjs; aqui solo se mira lo que llega bien escrito.
+    if (typeof tarea.cwd !== 'string' || tarea.cwd === '') continue;
+
+    // La misma cuenta que normalizarRuta: resolver contra la raiz y mirar si lo
+    // relativo empieza por "..". Sigue siendo absoluto solo si apunta a otra
+    // unidad de Windows, que tambien es estar fuera.
+    const absoluto = path.resolve(raiz, tarea.cwd);
+    const relativo = path.relative(raiz, absoluto).split(path.sep).join('/');
+    if (relativo === '..' || relativo.startsWith('../') || path.isAbsolute(relativo)) {
+      fuera.push(tarea);
+      continue;
+    }
+
+    // Un archivo no sirve de directorio de trabajo: cuenta como que no esta.
+    const estado = fs.statSync(absoluto, { throwIfNoEntry: false });
+    if (!estado || !estado.isDirectory()) inexistentes.push(tarea);
+  }
+
+  const veredictos = [];
+
+  if (fuera.length === 1) {
+    veredictos.push(aborta(
+      `el cwd de "${fuera[0].id}" cae fuera del repositorio: ${fuera[0].cwd}`, FUERA_DE_RAIZ));
+  } else if (fuera.length > 1) {
+    veredictos.push(aborta(
+      'los cwd de estas tareas caen fuera del repositorio:' + listaCwd(fuera), FUERA_DE_RAIZ));
+  }
+
+  if (inexistentes.length === 1) {
+    veredictos.push(aborta(
+      `el cwd de "${inexistentes[0].id}" no existe: ${inexistentes[0].cwd}`, NO_EXISTE));
+  } else if (inexistentes.length > 1) {
+    veredictos.push(aborta(
+      'los cwd de estas tareas no existen:' + listaCwd(inexistentes), NO_EXISTE));
+  }
+
+  return veredictos;
 }

@@ -48,6 +48,33 @@ export function leerBoceto(rutaBoceto) {
         `la tarea "${tarea.id}" tiene un "timeout" invalido: ${JSON.stringify(tarea.timeout)}.`,
         'debe ser un numero de minutos mayor que cero');
     }
+    // Los tres campos siguientes son opcionales, pero un valor mal escrito no se
+    // nota hasta que el CLI lo rechaza, ya con la ola pagada. Ojo con null: no es
+    // lo mismo que omitido, y aqui es invalido.
+    if (tarea.presupuesto !== undefined &&
+        (typeof tarea.presupuesto !== 'number' ||
+         !Number.isFinite(tarea.presupuesto) || !(tarea.presupuesto > 0))) {
+      throw new ErrorVitral(
+        `la tarea "${tarea.id}" tiene un "presupuesto" invalido: ${JSON.stringify(tarea.presupuesto)}.`,
+        'debe ser un numero de dolares mayor que cero; omite el campo para correr sin tope');
+    }
+    if (tarea.modelo !== undefined &&
+        (typeof tarea.modelo !== 'string' || tarea.modelo === '' || /\s/.test(tarea.modelo))) {
+      throw new ErrorVitral(
+        `la tarea "${tarea.id}" tiene un "modelo" invalido: ${JSON.stringify(tarea.modelo)}.`,
+        'debe ser una cadena sin espacios; omite el campo para usar el modelo por defecto');
+    }
+    // La ruta absoluta se rechaza aunque apunte dentro del repositorio: un boceto
+    // con rutas absolutas solo funciona en un ordenador. Se miran las dos formas
+    // de absoluta, la del sistema y la de Windows, para que "C:/algo" tambien
+    // aborte donde path.isAbsolute no lo reconoce.
+    if (tarea.cwd !== undefined &&
+        (typeof tarea.cwd !== 'string' || tarea.cwd.trim() === '' ||
+         path.isAbsolute(tarea.cwd) || path.win32.isAbsolute(tarea.cwd))) {
+      throw new ErrorVitral(
+        `la tarea "${tarea.id}" tiene un "cwd" invalido: ${JSON.stringify(tarea.cwd)}.`,
+        'debe ser una ruta relativa no vacia, como "sub/modulo"');
+    }
     if (!tarea.agente) tarea.agente = 'claude';
     if (!AGENTES[tarea.agente]) {
       throw new ErrorVitral(

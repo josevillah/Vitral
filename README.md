@@ -125,10 +125,45 @@ node vitral.mjs --seco --boceto ejemplo/boceto.json
 | `rutas` | si | Donde puede escribir. Se le dice en el prompt y se revisa al final |
 | `agente` | no | `claude` por defecto |
 | `necesita` | no | Ids de las tareas que deben terminar antes |
-| `presupuesto` | no | Tope de gasto en USD para esa tarea (lee las limitaciones; ojo con las tareas de revision) |
+| `presupuesto` | no | Tope de gasto en USD para esa tarea. Numero mayor que cero (lee las limitaciones; ojo con las tareas de revision) |
 | `timeout` | no | Minutos antes de matar la tarea. Por defecto 15 |
-| `modelo` | no | Alias o nombre de modelo: `sonnet`, `opus`, `claude-fable-5`. Para `opencode`, `proveedor/modelo` |
-| `cwd` | no | Directorio de trabajo del agente, relativo a la raiz |
+| `modelo` | no | Alias o nombre de modelo: `sonnet`, `opus`, `claude-fable-5`. Para `opencode`, `proveedor/modelo`. Cadena no vacia y sin espacios |
+| `cwd` | no | Directorio de trabajo del agente. Ruta relativa a la raiz, que caiga dentro del repositorio y exista |
+
+### Que valores acepta cada campo opcional
+
+`presupuesto`, `modelo` y `cwd` se comprueban antes de lanzar nada, no cuando el
+CLI del agente los rechaza a mitad de una ola.
+
+| Campo | Valido | Invalido |
+|---|---|---|
+| `presupuesto` | Numero mayor que cero. Omitido significa "sin tope" | `0`, negativos, `NaN`, `Infinity`, cualquier cosa que no sea `number`, incluida la cadena `"3"` |
+| `modelo` | Cadena no vacia, sin espacios en blanco | Cadena vacia, cadena con espacios, y cualquier cosa que no sea `string` |
+| `cwd` | Cadena no vacia con una ruta **relativa**, que resuelva **dentro de la raiz** y **exista** en disco | Cadena vacia, ruta absoluta, ruta que salga de la raiz, directorio que no existe, y cualquier cosa que no sea `string` |
+
+Los tres siguen siendo opcionales: omitirlos es valido y es lo normal.
+
+Tres decisiones que se tomaron a proposito, porque parecen severas y no lo son:
+
+- **`presupuesto: 0` aborta en vez de significar "sin tope".** Quien quiera correr
+  sin limite omite el campo. Aceptar el `0` como ilimitado es exactamente el
+  malentendido que hace dano: `0` es justo lo que escribe quien quiere decir
+  "nada", y lo que pasaba entonces era correr sin tope ninguno.
+- **La cadena `"3"` tambien aborta.** Es un `number` o no lo es. Aceptar cadenas
+  numericas invita a `"3 dolares"` y a `"3,5"`.
+- **`cwd` tiene que ser relativo y caer dentro del repositorio.** Fuera de el, git
+  no ve nada: no hay forma de revisar ni de deshacer lo que escriba el agente, y
+  esa es la unica red de seguridad de vitral. Una ruta absoluta aborta aunque
+  apunte dentro del repositorio, porque un boceto con rutas absolutas solo
+  funciona en un ordenador.
+
+**Vitral no valida que el modelo exista.** No puede: los nombres cambian con la
+version del CLI y con el proveedor. Solo comprueba la forma; que el modelo exista
+lo decide el CLI, que ademas falla rapido y barato.
+
+La forma —tipo, rango, ruta relativa— se comprueba al leer el boceto. Que el `cwd`
+exista en disco y caiga dentro del repositorio se comprueba con los demas
+guardarrailes, asi que `--seco` tambien lo caza, sin lanzar ningun agente.
 
 Las tareas se ordenan en olas por dependencias. Las de una misma ola corren en
 paralelo; las olas, en serie. Si una tarea falla, la corrida se detiene ahi y las
@@ -308,7 +343,7 @@ Antes de dar por bueno un cambio en el motor:
 node pruebas/checks.mjs
 ```
 
-Doce comprobaciones, cero dependencias, sale con 0 o con 1. Cada una monta su
+Dieciseis comprobaciones, cero dependencias, sale con 0 o con 1. Cada una monta su
 propio repositorio temporal con el boceto de `ejemplo/` dentro, asi que el
 resultado no depende de en que rama estes ni de lo que quedara de una corrida
 anterior. Ninguna lanza agentes de verdad.

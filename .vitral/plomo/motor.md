@@ -73,6 +73,34 @@ varios archivos a la vez: dilo en el handoff.
 `boceto.mjs` garantiza que `id`, `prompt`, `rutas` y `agente` existen y son
 validos cuando la tarea sale de ahi. Los demas modulos no revalidan.
 
+Los opcionales tambien tienen forma fija. Omitir cualquiera de ellos es valido y
+es lo normal:
+
+| Campo | Valido | Invalido |
+|---|---|---|
+| `presupuesto` | Numero mayor que cero. Omitido significa "sin tope" | `0`, negativos, `NaN`, `Infinity`, cualquier cosa que no sea `number`, incluida la cadena `"3"` |
+| `modelo` | Cadena no vacia, sin espacios en blanco | Cadena vacia, cadena con espacios, y cualquier cosa que no sea `string` |
+| `cwd` | Cadena no vacia con una ruta **relativa**, que resuelva **dentro de la raiz** y **exista** en disco | Cadena vacia, ruta absoluta, ruta que salga de la raiz, directorio que no existe, y cualquier cosa que no sea `string` |
+
+De estos tres, la forma la comprueba `boceto.mjs`; el entorno —que el `cwd` exista
+y caiga dentro de la raiz— lo juzga `guardarrailes.mjs`.
+
+Tres decisiones que se tomaron a proposito y que no se revierten sin hablarlo:
+
+- **`presupuesto: 0` aborta en vez de significar "sin tope".** Quien quiera correr
+  sin limite omite el campo. Aceptar el `0` como ilimitado es exactamente el
+  malentendido que hace dano.
+- **La cadena `"3"` tambien aborta.** Es un `number` o no lo es. Aceptar cadenas
+  numericas invita a `"3 dolares"` y a `"3,5"`.
+- **`cwd` tiene que ser relativo y caer dentro de la raiz.** Fuera del repositorio
+  git no ve nada, asi que no hay forma de revisar ni de deshacer lo que escriba el
+  agente, y no hay otra red de seguridad. Una ruta absoluta aborta aunque apunte
+  dentro del repositorio: un boceto con rutas absolutas solo funciona en un
+  ordenador.
+
+Vitral no valida que el modelo exista: los nombres cambian con la version del CLI
+y con el proveedor. Eso lo decide el CLI, que falla rapido y barato.
+
 ### `resultado` — lo que devuelve un vidrio
 
 ```
@@ -210,11 +238,17 @@ leerPlomo(dirPlomo) -> { texto, archivos }
 Valida forma: campos obligatorios, tipos, dependencias que apuntan a tareas que
 existen, agente conocido. Rellena `agente` con `'claude'` si falta.
 
+Los opcionales entran ahi: `presupuesto` numero mayor que cero, `modelo` cadena no
+vacia sin espacios, `cwd` cadena no vacia y relativa. Es forma, o sea lo que se
+decide mirando el valor y nada mas, que es todo lo que se puede hacer aqui:
+`leerBoceto(rutaBoceto)` no recibe la raiz. Si el `cwd` existe en disco y si cae
+dentro del repositorio no es forma: eso lo juzga `guardarrailes.mjs`.
+
 El plomo se lee del directorio del boceto, no de una ruta fija: con
 `--boceto ejemplo/boceto.json` los contratos salen de `ejemplo/plomo/`.
 
 **No le corresponde:** decidir el orden de ejecucion, juzgar si el plan es
-sensato, imprimir.
+sensato, imprimir, ni ir al disco a comprobar si un `cwd` existe.
 
 ### `src/olas.mjs`
 
@@ -312,6 +346,7 @@ revisarRama({ repo, rama, banderas, rutaBoceto }) -> veredicto[]
 revisarSolapamientos(olas, raiz) -> veredicto[]
 revisarPresupuestos(ejecutan) -> veredicto[]
 revisarSobrescritura({ ejecutan, raiz, repo, banderas, handoffs, incompletos }) -> veredicto[]
+revisarCwd(ejecutan, raiz) -> veredicto[]
 ```
 
 Lo que se comprueba antes de lanzar nada. Ninguna imprime ni aborta.
@@ -319,6 +354,14 @@ Lo que se comprueba antes de lanzar nada. Ninguna imprime ni aborta.
 El solapamiento **solo importa dentro de una misma ola**. Entre olas distintas es
 normal y a menudo deliberado: una tarea de revision mira `app/` entera despues de
 que otras dos hayan escrito en `app/Models/` y `app/Views/`.
+
+El `cwd` se juzga aqui y no en `boceto.mjs` porque hacen falta el disco y la raiz.
+`revisarCwd` devuelve `aborta` por los `cwd` que caen fuera de la raiz y por los
+que no existen; la forma —cadena no vacia y relativa— ya viene comprobada de
+`boceto.mjs`. Para saber si cae dentro vale la misma cuenta que usa
+`normalizarRuta`: resolver contra la raiz y mirar si el relativo empieza por `..`.
+Un `cwd` que apunta a un archivo que existe cuenta como "no existe": no sirve de
+directorio de trabajo y el agente fallaria igual al arrancar.
 
 **No le corresponde:** imprimir, terminar el proceso, modificar el plan.
 
