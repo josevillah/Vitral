@@ -59,7 +59,7 @@ fn medida(filas: u16, columnas: u16) -> PtySize {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn abrir_panel(
     app: AppHandle,
     estado: State<'_, Paneles>,
@@ -84,8 +84,10 @@ fn abrir_panel(
         .spawn_command(orden)
         .map_err(|e| format!("no se pudo lanzar \"{SHELL}\": {e}"))?;
 
-    // El lado esclavo se suelta en cuanto el proceso arranca: mientras siga abierto
-    // aqui, el lector nunca veria el final del PTY y el hilo no terminaria jamas.
+    // Soltar el esclavo aqui es inofensivo, pero en Windows no provoca ningun EOF:
+    // maestro y esclavo comparten el mismo `Arc<Mutex<Inner>>`, y el extremo de
+    // escritura de la tuberia solo se cierra al soltar el MAESTRO. Quien desbloquea
+    // al lector es el vigia al quitar la entrada del mapa, nadie mas.
     drop(par.slave);
 
     let escritor = par
@@ -97,41 +99,36 @@ fn abrir_panel(
         .try_clone_reader()
         .map_err(|e| format!("no se pudo tomar el lector del panel \"{id}\": {e}"))?;
 
-    // El `Child` se lo lleva el hilo lector para poder esperarlo; esta copia es lo
+    // El `Child` se lo lleva el hilo vigia para poder esperarlo; esta copia es lo
     // unico que permite matarlo desde fuera.
     let verdugo = hijo.clone_killer();
 
-    let app_hilo = app.clone();
-    let id_hilo = id.clone();
-    std::thread::spawn(move || {
+    // Hilo lector: lee del PTY en trozos y emite `panel:salida`. Sale del bucle con
+    // `Ok(0)` o con `Err`, indistintamente, y al salir no emite nada mas: la linea de
+    // cierre la pone el vigia, que es quien sabe que ya no queda salida por delante.
+    let app_lector = app.clone();
+    let id_lector = id.clone();
+    let hilo_lector = std::thread::spawn(move || {
         let mut buf = [0u8; TROZO];
         loop {
             match lector.read(&mut buf) {
-                // El proceso cerro su lado del PTY. No es un error.
+                // Se solto el maestro y se acabo el PTY. No es un error.
                 Ok(0) => break,
                 Ok(n) => {
                     let carga = Salida {
-                        id: id_hilo.clone(),
+                        id: id_lector.clone(),
                         datos: BASE64.encode(&buf[..n]),
                     };
-                    if app_hilo.emit("panel:salida", carga).is_err() {
+                    if app_lector.emit("panel:salida", carga).is_err() {
                         break;
                     }
                 }
                 Err(_) => break,
             }
         }
-
-        let codigo = hijo.wait().map(|estado| estado.exit_code()).unwrap_or(1);
-        let _ = app_hilo.emit(
-            "panel:fin",
-            Fin {
-                id: id_hilo,
-                codigo,
-            },
-        );
     });
 
+    let id_vigia = id.clone();
     mapa.insert(
         id,
         Panel {
@@ -141,10 +138,53 @@ fn abrir_panel(
         },
     );
 
+    // El bloqueo se suelta antes de arrancar el vigia: si el proceso muriera al
+    // instante, el vigia no puede quitar del mapa una entrada que todavia no esta
+    // puesta, porque entonces el maestro quedaria guardado ahi para siempre.
+    drop(mapa);
+
+    // Hilo vigia: espera al proceso y hace los cinco pasos del contrato en orden. Es
+    // el unico que emite `panel:fin`, y lo emite exactamente una vez, pase lo que pase.
+    let app_vigia = app;
+    std::thread::spawn(move || {
+        // 1. El estado del proceso, con su codigo. Si `wait()` fallara —no deberia—,
+        //    se emite igual con codigo 1: vale mas un codigo aproximado que un panel
+        //    que se queda mudo, que es justo el fallo que esto arregla.
+        let codigo = hijo.wait().map(|estado| estado.exit_code()).unwrap_or(1);
+
+        // 2. Quitar la entrada del mapa, que suelta el maestro, que es lo unico que
+        //    desbloquea al lector. Si ya no esta —cerrar_panel gano la carrera, o se
+        //    cerro la ventana— no es un error. Ni siquiera un mutex envenenado puede
+        //    dejar el maestro dentro: sin soltarlo no hay `Ok(0)` ni `panel:fin`.
+        // 3. El bloqueo se suelta al cerrar este bloque, antes de esperar al lector.
+        let difunto = {
+            let estado: State<'_, Paneles> = app_vigia.state();
+            let mut mapa = match estado.0.lock() {
+                Ok(mapa) => mapa,
+                Err(envenenado) => envenenado.into_inner(),
+            };
+            mapa.remove(&id_vigia)
+        };
+        drop(difunto);
+
+        // 4. Esperar al lector. Cerrar el extremo de escritura no descarta lo ya
+        //    escrito, asi que el ultimo trozo de salida llega antes del `Ok(0)`.
+        let _ = hilo_lector.join();
+
+        // 5. Y solo ahora la linea de cierre, detras de toda la salida y no en medio.
+        let _ = app_vigia.emit(
+            "panel:fin",
+            Fin {
+                id: id_vigia,
+                codigo,
+            },
+        );
+    });
+
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn escribir_en_panel(estado: State<'_, Paneles>, id: String, datos: String) -> Result<(), String> {
     let mut mapa = abrir_mapa(&estado)?;
     let panel = mapa
@@ -158,7 +198,7 @@ fn escribir_en_panel(estado: State<'_, Paneles>, id: String, datos: String) -> R
         .map_err(|e| format!("no se pudo escribir en el panel \"{id}\": {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn redimensionar_panel(
     estado: State<'_, Paneles>,
     id: String,
@@ -176,7 +216,7 @@ fn redimensionar_panel(
         .map_err(|e| format!("no se pudo redimensionar el panel \"{id}\": {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cerrar_panel(estado: State<'_, Paneles>, id: String) -> Result<(), String> {
     let mut mapa = abrir_mapa(&estado)?;
     let mut panel = mapa
