@@ -1,0 +1,13 @@
+{
+  "nombre": "Panel de terminal (PTY) en Tauri",
+  "tareas": [
+    {
+      "id": "panel",
+      "agente": "claude",
+      "rutas": ["ui/"],
+      "presupuesto": 8,
+      "timeout": 30,
+      "prompt": "Monta desde cero la interfaz de escritorio de Vitral en ui/, con Tauri v2 y una ventana que contenga un unico panel de terminal donde corra powershell.exe. El contrato lo tienes entero arriba: la disposicion de archivos, el catalogo de comandos y eventos IPC, el camino de los datos en los dos sentidos, los simbolos exactos de portable-pty, los cuatro campos de tauri.conf.json que no son opcionales, las opciones de xterm, el teclado y la tabla de bordes. Sigue el contrato al pie de la letra: los nombres de los comandos, de los eventos y de sus campos son origen unico y se copian literales en Rust y en JavaScript. Un orden de trabajo que evita esperas largas al final: primero baja los tres archivos vendorizados con npm pack y dejalos en ui/web/vendor/, despues escribe ui/src-tauri/Cargo.toml con las versiones exactas de la tabla y corre una compilacion para que las dependencias queden bajadas, y solo entonces escribe main.rs y el frontend. La cache de Cargo ya viene caliente de antes de la corrida, asi que compilar no deberia costarte mas de un par de minutos. Comprueba tu trabajo con: cargo build --manifest-path ui/src-tauri/Cargo.toml. Tiene que compilar sin errores; lee los avisos y arregla los que sean de tu codigo. No puedes lanzar la aplicacion ni ver la ventana, asi que no digas en ningun sitio que funciona: di que compila. En el handoff deja, ademas de lo de siempre, la lista de comprobacion manual de siete puntos que esta al final del contrato, para que una persona la vaya tachando con cargo tauri dev delante. Si algo del contrato no se pudo hacer tal como esta escrito, dilo con el motivo en 'Me desvie' en vez de cambiarlo en silencio: el contrato se corrige despues, y esa nota es la unica forma de que alguien se entere. No toques nada fuera de ui/. En concreto no toques .gitignore, que ya viene preparado, ni README.md, que se escribe cuando una persona haya verificado que esto abre de verdad, ni nada de src/, que es el motor de Node y no tiene que ver con esta tanda."
+    }
+  ]
+}

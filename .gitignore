@@ -15,3 +15,7 @@ node_modules/
 
 # Salidas sueltas de pruebas manuales.
 seco.txt
+
+# La interfaz: lo que produce cargo y lo que genera tauri.
+ui/src-tauri/target/
+ui/src-tauri/gen/
