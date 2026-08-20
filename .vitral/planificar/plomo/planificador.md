@@ -154,7 +154,7 @@ tocar.
 
 ## El flujo de una sesion
 
-Seis fases, en este orden. El orden importa: el plomo se escribe **antes** que el
+Siete fases, en este orden. El orden importa: el plomo se escribe **antes** que el
 boceto, porque hasta que los contratos no estan cerrados no se sabe de verdad
 cuantas tareas hay ni por donde se cortan.
 
@@ -189,7 +189,12 @@ Reglas del reparto, todas comprobables:
 - **Las olas salen solas.** No se declaran: `calcularOlas` las deduce de
   `necesita` por orden topologico. Cada nivel es una ola.
 
-### 3. Escritura del plomo
+### 3. Como se ve
+
+Fase propia, y solo cuando aplica. El propio planificador decide si aplica,
+sin gastar una pregunta en ello. Esta abajo, en su seccion.
+
+### 4. Escritura del plomo
 
 Los contratos, antes que nada. Aqui va todo lo que mas de una tarea necesita
 saber y que hoy no esta escrito en ningun sitio:
@@ -197,7 +202,8 @@ saber y que hoy no esta escrito en ningun sitio:
 - Formatos exactos, con un ejemplo completo.
 - Rutas y nombres de archivo, literales.
 - Las firmas de cada funcion nueva: nombre, argumentos, que devuelve.
-- Que se ve en pantalla, si algo se ve.
+- Que se ve en pantalla, si algo se ve: la tabla entera de la fase 3, con
+  valores literales.
 - Los catalogos estaticos, con su origen unico declarado.
 - Que archivos **no** toca nadie en esta tanda.
 
@@ -216,16 +222,16 @@ verifican leyendo `leerPlomo` en `src/boceto.mjs`:
    los contratos salen de `otro/plomo/`. Sirve para preparar una tanda aparte sin
    arrastrar los plomos de la principal.
 
-### 4. Repaso de bordes
+### 5. Repaso de bordes
 
 Fase propia, no un vistazo al final. Esta abajo, en su seccion.
 
-### 5. Escritura del boceto
+### 6. Escritura del boceto
 
 Con los contratos cerrados, el boceto es mecanico. Campos reales y sus reglas,
 mas abajo.
 
-### 6. Cierre de la sesion
+### 7. Cierre de la sesion
 
 Es el cierre de la **conversacion**, no el de la tanda: la tanda se cierra despues,
 cuando ya se ejecuto y se mergeo, y tiene su propia sesion mas abajo.
@@ -285,6 +291,162 @@ siguiente vidrio sin contrato.
 Lo que **no** se toca en una sesion de cierre: `.vitral/plomo/retirados/LEEME.md`,
 cualquier subsistema con boceto propio como `.vitral/ui/`, y todo lo que este fuera de
 `.vitral/`.
+
+---
+
+## Como se ve
+
+La variabilidad se concentra donde el contrato calla, y en lo visual se nota a
+simple vista. Esta fase no trae ningun principio nuevo: es la pregunta que cierra
+la lista de mas abajo —*¿hay algo que importe que salga igual y que el contrato no
+este diciendo?*— aplicada al sitio donde falla mas veces y mas rapido.
+
+Produce una sola cosa: la tabla "Como se ve" del plomo, con valores literales.
+
+### Cuando aplica
+
+No es una pregunta mas para la persona. El planificador lo decide solo, con lo que
+ya tiene encima de la mesa al terminar la fase 2, aplicando un test a la respuesta
+de la fase 1 —esa que dice que tiene que existir cuando esto termine, dicho como
+lo diria un usuario:
+
+> **¿Va a mirar alguien esto y decir "esto no pega con lo otro"?**
+
+Y "lo otro" son dos cosas: otra tarea de esta tanda, o lo que anada la tanda
+siguiente. La segunda mitad no sobra. La tanda de la cuadricula era **una sola
+tarea** y su contrato visual tenia que existir igual, porque sin el la tanda
+siguiente reinventa los colores —lo dice su propio boceto. Es la distincion de
+siempre: no es cuantas tareas lo tocan hoy, es si lo visible sobrevive a la tarea.
+
+**No es lo mismo que "toca interfaz".** Vitral no tiene interfaz grafica en su
+linea principal y aun asi su contrato visual mas detallado es de terminal:
+`historial.md` fijaba la alineacion de las columnas, las lineas en blanco de
+arriba y abajo, y que `ok` va en verde y `FALLO` en rojo. Una tanda que solo
+imprime en pantalla entra en esta fase igual que una de ventanas.
+
+Tres salidas, y las tres se dicen:
+
+- **Aplica** — se corre la fase, y lo que salga va al plomo.
+- **Aplica a algo diminuto** —un mensaje, una linea— no se abre la fase: va al
+  prompt de esa tarea. Misma regla que todo lo demas: lo necesita una, prompt; lo
+  necesitan varias, plomo.
+- **No aplica** — **se dice en voz alta y se dice por que.** Un salto no declarado
+  no se distingue de un descuido, y esta es la unica fase que al omitirse no deja
+  rastro: el plan sale igual de convincente sin ella.
+
+### Que elige la persona y que decide el planificador
+
+La persona que planifica puede no saber nada de tipografia, y preguntarle "¿que
+fuente quieres?" no le sirve de nada a nadie. La regla que reparte es una sola:
+**lo que es gusto se elige, lo que es tecnica se decide.**
+
+| Cosa | Quien | Como se resuelve |
+|---|---|---|
+| Tema: claro, oscuro o los dos | La persona | Se pregunta. Es gusto, y ademas condiciona todo lo demas |
+| Paleta | La persona | El planificador propone dos o tres completas; ella elige una |
+| Tipografia | El planificador | Propone una combinacion; ella confirma |
+| Escala de espaciado | El planificador | La fija. No hay nada que preguntar |
+| Estados | El planificador | Los enumera y los fija. Tampoco hay nada que preguntar |
+| Lo que no lleva tratamiento | El planificador | Lo escribe. Mas abajo |
+
+Dos preguntas, entonces, y no seis. El resto son decisiones tecnicas que el
+planificador toma solo y anuncia.
+
+### Como se propone
+
+Aqui es donde la fase se estropea si se hace mal. **Se proponen paletas completas
+y con valores, no adjetivos.** Una paleta "sobria y profesional" no es una paleta:
+es la misma nada que "ya lo iremos viendo", y acaba igual, con tres agentes
+eligiendo tres cosas distintas.
+
+Lo que se pone delante de la persona son dos o tres bloques cerrados, cada uno con
+todos sus valores, listos para copiar:
+
+```
+A · Grafito           B · Pergamino
+fondo      #0c0c0c    fondo      #faf8f3
+texto      #cccccc    texto      #2b2b2b
+tenue      #6a6a6a    tenue      #8a857c
+acento     #3b78ff    acento     #b4532a
+ok         #23d18b    ok         #2f7d32
+error      #f14c4c    error      #c0392b
+aviso      #e5c07b    aviso      #b8860b
+```
+
+Ella elige una letra. No rellena un hueco, no busca un color, no aprende nada de
+diseno. Y si dice "la A pero el acento mas apagado", eso es una eleccion valida:
+el planificador cierra el valor nuevo y repite el bloque entero, para que lo que
+se lleva al plomo siga siendo una paleta completa y no un parche.
+
+**El numero de colores sale de los estados, no al reves.** Primero se enumera que
+estados tiene la superficie; despues se propone una paleta que los cubra todos. Al
+reves salen paletas bonitas a las que les falta el color de "deshabilitado", y ese
+color acaba eligiendolo un agente.
+
+### Lo que se fija sin preguntar
+
+**El espaciado, como escala y no como valores sueltos.** Una escala corta y
+declarada —`4 / 8 / 12 / 16 / 24 / 32`, en pixeles o en la unidad que toque— con
+la regla de que no se usa nada que no este en ella. Sin escala, cada agente elige
+su propio margen y el conjunto se ve descuadrado aunque cada pieza este bien por
+separado.
+
+**Los estados, enumerados y con su valor.** Cuales son depende de la superficie, y
+esto hay que mirarlo antes de copiar ninguna lista:
+
+| Superficie | Estados por defecto |
+|---|---|
+| Interfaz grafica | normal, hover, activo, deshabilitado, cargando, error |
+| Terminal, informe, listado | los del dominio; en Vitral son `ok`, `FALLO` y saltada |
+
+Copiar los seis de interfaz grafica a una tanda de terminal es pedirle a los
+agentes un estado *hover* que no existe, y se lo van a inventar. La lista se
+escribe mirando la superficie que se construye, no copiandola de aqui.
+
+**El modo sin color, si la superficie es de terminal.** Es una decision visual que
+nadie piensa en preguntar y que hay que tomar igual. `src/salida.mjs` ya la tiene
+tomada: cuando no hay TTY, la paleta entera pasa a cadenas vacias y el texto sale
+sin un solo codigo de escape. Si el plomo no lo dice, un agente lo hace y otro no,
+y la salida redirigida a un archivo sale con basura.
+
+### Lo que no lleva tratamiento, dicho a proposito
+
+Las decisiones negativas tambien son contrato, igual que la lista de archivos que
+no toca nadie. `panel-pty.md` lo escribe asi:
+
+> *No hay etiqueta ni titulo por panel, y es deliberado.*
+
+Sin esa linea un agente anade una barra de titulo, y hace bien: es lo razonable si
+nadie ha dicho lo contrario. Con ella no la anade ninguno. Lo que se ha decidido
+dejar desnudo se escribe, y se escribe con el "a proposito" delante, para que la
+tanda siguiente no lo lea como un olvido y lo "arregle".
+
+### Como se escribe en el plomo
+
+Una tabla, valores literales, bajo el encabezado que da nombre a esta fase. El
+modelo es el de `panel-pty.md`, y su primera linea es la que explica por que
+existe todo esto:
+
+> *Es contrato, no gusto personal: si no se escribe, cada agente elige otra cosa.*
+
+Y vale aqui la regla que ya rige el resto del plomo: **los ejemplos son contrato,
+no ilustracion.** Con una diferencia practica segun la superficie:
+
+- **En terminal se regenera.** En cuanto las funciones existan, el bloque de
+  pantalla se produce llamandolas y se pega la salida literal. Es lo que hizo
+  `historial.md`, que lo dice en el propio contrato: *"son la salida literal... no
+  estan escritos a mano"*.
+- **En interfaz grafica no se puede.** El agente no puede abrir la ventana ni
+  mirarla. La compensacion es escribir la lista de comprobacion manual que va a
+  pasar una persona delante, punto por punto, y pedirla en el handoff.
+  `panel-pty.md` tiene una de catorce puntos, y para eso esta.
+
+Una razon de peso para no saltarsela cuando aplica: las tareas de interfaz son las
+mas caras que ha corrido este repositorio —$1.23 en 12 turnos, contra $0.84 en 9
+de una de persistencia con contrato del mismo tamano— y la causa medida es que hay
+mas idas y venidas cuando hay que cuadrar un formato de pantalla. Que un contrato
+cerrado ahorre alguna de esas vueltas es razonable esperarlo, pero no esta medido.
+Lo que si esta medido es que la ola donde se juega es la cara.
 
 ---
 
@@ -631,6 +793,8 @@ gastar menos, y no son intercambiables. Es otra tanda, y su plomo empieza aqui.
 | `presupuesto` en una tarea `opencode` | `--seco` avisa: se ignora |
 | Un `modelo` sin barra en una tarea `opencode` | Nadie lo detecta. El validador solo mira la forma; el CLI lo rechaza ya en la corrida, con la ola pagada. Repasar a mano los `modelo` de las tareas `opencode` |
 | Topes de presupuesto heredados de otro modelo | Nadie lo detecta. Al poner `modelo`, multiplicar todos los topes por la razon de tarifas de la tabla de modelos |
+| Una tanda con superficie visible y sin tabla "Como se ve" | Nadie lo detecta, y el plan sale igual de convincente. Solo se caza en la fase 3 |
+| Una paleta propuesta en adjetivos | Nadie lo detecta. "Sobria y profesional" no es una paleta: se proponen bloques cerrados con todos los valores |
 | Un plomo de una tanda vieja que sigue en `.vitral/plomo/` | La cabecera de `--seco` dice cuantos archivos de plomo hay y cuanto pesan |
 | Un boceto ya ejecutado que sigue en `.vitral/boceto.json` | Nadie lo detecta. `node vitral.mjs` sin banderas lo relanza tal cual, y si su plomo ya se movio, los agentes corren sin contrato y el prompt no lo dice |
 | Un handoff viejo de un id que se repite entre tandas | Nadie lo detecta. `--solo` se salta las dependencias que tienen handoff en disco sin mirar de que tanda son, e inyecta el contenido viejo en el prompt del dependiente |
