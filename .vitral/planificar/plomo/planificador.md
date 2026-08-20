@@ -394,12 +394,16 @@ En cada tarea:
 | `agente` | no | Si falta se pone `claude`. Si esta, tiene que existir: `claude` u `opencode` |
 | `necesita` | no | Cada id tiene que existir en el boceto |
 | `timeout` | no | Numero de minutos mayor que cero. Por defecto 15 |
-| `presupuesto` | no | **No se valida.** En dolares. Solo lo respeta `claude` |
-| `modelo` | no | **No se valida.** Alias o nombre. Para `opencode`, `proveedor/modelo` |
-| `cwd` | no | **No se valida.** Directorio de la tarea, relativo a la raiz. Las rutas se resuelven contra el |
+| `presupuesto` | no | Numero mayor que cero, en dolares. Solo lo respeta `claude` |
+| `modelo` | no | Cadena no vacia y sin espacios. Alias o nombre. Para `opencode`, `proveedor/modelo` |
+| `cwd` | no | Ruta relativa no vacia. Directorio de la tarea. Las rutas se resuelven contra el |
 
-Los tres ultimos el motor los usa, pero nadie comprueba su forma: un
-`presupuesto: "tres"` no da error al leer el boceto.
+Los tres ultimos se validan solo si vienen, y ojo con `null`: omitido y `null` no
+son lo mismo, y `null` es invalido en los tres.
+
+Lo que se comprueba es la forma, no el significado. `modelo: "opus"` en una tarea
+`opencode` pasa el validador —es una cadena sin espacios— y lo rechaza el CLI ya
+durante la corrida. Es deliberado, y lo explica la seccion de modelos.
 
 ### Lo que aborta una corrida por culpa del plan
 
@@ -410,6 +414,11 @@ Esto se detecta con `--seco`, sin gastar:
 - Un `id` repetido.
 - `necesita` apuntando a un id que no existe.
 - Un `timeout` que no es un numero mayor que cero.
+- Un `presupuesto` que no es un numero mayor que cero.
+- Un `modelo` que no es cadena, esta vacio o lleva espacios.
+- Un `cwd` que no es cadena, esta vacio o es una ruta absoluta.
+- Un `cwd` bien escrito que resuelve fuera del repositorio, o que no existe en
+  disco como directorio. Lo dice `revisarCwd`, y aborta tambien con `--seco`.
 - Un `agente` que no existe.
 - Una dependencia circular: `calcularOlas` lo dice con los ids del ciclo.
 - Dos tareas **de la misma ola** con rutas que se solapan.
@@ -459,6 +468,156 @@ pero la tarea siguiente se queda sin lo que necesitaba leer.
 
 ---
 
+## Que modelo pedir
+
+El campo `modelo` existe, se valida y llega a `--model` en los dos adaptadores. Lo
+que no existia hasta ahora es el criterio, y eso tiene una consecuencia medible:
+**las ocho tareas que ha corrido este repositorio fueron en el modelo por
+defecto**, `claude-opus-5[1m]`, con `modelo` omitido en el boceto. Nadie lo
+decidio. Salio asi.
+
+Omitir `modelo` no es elegir el modelo por defecto: es no elegir. Decide el CLI, y
+lo que decide puede cambiar de una version a otra sin que el boceto se entere.
+
+### Lo que decide el coste no es la dificultad
+
+Antes del criterio, el dato que lo enmarca, porque cambia la pregunta. Sumando el
+`modelUsage` de los ocho `.vitral/logs/*.json`:
+
+| Concepto | $ | % del total |
+|---|---|---|
+| Salida generada | 2.09 | 24.4% |
+| Lectura de cache | 2.60 | 30.5% |
+| Escritura de cache | 3.74 | 43.8% |
+| Entrada sin cachear | 0.00 | 0.0% |
+| Sidecar de Haiku | 0.11 | 1.2% |
+| **Total** | **8.54** | |
+
+**Tres cuartas partes de lo que cuesta un vidrio es contexto releido, no texto
+generado.** El coste correlaciona con la cache leida a r=0.992 y con los turnos a
+r=0.922. Con el tipo de tarea no correlaciona: eso no se mide con ocho puntos.
+
+Y la escritura de cache es casi constante por tarea, unos $0.35, haga la tarea lo
+que haga. `checks` hizo cinco turnos y pago $0.344 en cachear su prompt y el
+plomo: el 63% de su coste antes de tocar nada. **Hay un suelo por vidrio que no
+depende de la dificultad y se paga entero aunque la tarea sea trivial.** Es el
+argumento del plomo que no se retira, visto desde la factura.
+
+### La escalera
+
+**Esto es intuicion, no medicion.** Se escribe porque un criterio explicito y
+marcado es mejor que la omision de hoy, no porque haya datos detras. Las ocho
+corridas no sirven de prueba: todas usaron el mismo modelo y todas salieron bien,
+asi que no hay ni un fallo que atribuir a haber pedido de menos. Cuando lo haya,
+se corrige aqui.
+
+| Trabajo | Que pedir | Por que |
+|---|---|---|
+| Planificar y revisar | El modelo mas capaz | Un error se multiplica por el numero de vidrios |
+| Escribir codigo contra un contrato cerrado | Menos | El trabajo duro ya esta hecho en el plomo |
+| Documentacion contra el contrato | Menos todavia | Con el aviso de abajo |
+
+El primer escalon es el unico que se apoya en algo ya escrito: es el mismo
+argumento que sostiene la heuristica de presupuesto de la revision, y el que
+aparece dos veces mas en este archivo. El plomo es el unico punto del sistema
+donde un error se multiplica por el numero de vidrios, y planificar y revisar son
+las dos tareas que lo tocan entero.
+
+**El tercer escalon lo desmiente el dato disponible.** En la tanda de
+validar-boceto, `documentacion` —README.md y motor.md contra un contrato ya
+cerrado, exactamente este escalon— hizo mas turnos que dos de las tres tareas de
+codigo, y costo lo mismo:
+
+| Tarea | Tipo | Turnos | Coste |
+|---|---|---|---|
+| `checks` | pruebas | 5 | $0.56 |
+| `forma` | codigo, con la tabla de bordes entera | 9 | $0.78 |
+| `guardarrailes` | codigo | 12 | $0.69 |
+| `documentacion` | documentacion contra contrato | **13** | $0.71 |
+
+Lo que si distingue a `documentacion` es la forma de sus turnos: 417 tokens de
+salida por turno, la mas baja de las ocho, y la menor cache leida por turno.
+Muchas ediciones pequenas y fieles a traves de dos archivos, no razonamiento
+largo. Eso puede justificar bajarle el modelo —el fallo tipico ahi es de
+fidelidad, no de criterio— pero **no** justifica esperar que salga mas barata. No
+salio.
+
+### Cambiar el modelo mueve el presupuesto
+
+Esto no es opcional y es la parte que mas dano hace si se olvida. **Toda la
+seccion de Presupuestos de arriba esta en dolares medidos sobre opus.** Poner
+`modelo` y dejar los topes rompe la heuristica en las dos direcciones: con un
+modelo mas barato el tope deja de ser techo, y con uno mas caro la revision se
+corta donde antes no se cortaba.
+
+La conversion es limpia, y por una razon concreta: todos los modelos actuales
+cobran la salida a exactamente cinco veces la entrada, y la cache a multiplos
+fijos de la entrada. Al cambiar de modelo la mezcla del gasto no cambia, solo la
+escala. **Multiplicar todos los topes de la tanda por la razon de tarifas es
+exacto, no aproximado.**
+
+| Modelo | Entrada $/M | Factor sobre opus |
+|---|---|---|
+| `claude-fable-5` | 10 | **2.00x** |
+| `claude-opus-5` | 5 | 1.00x, la referencia |
+| `claude-sonnet-5` | 3 | 0.60x |
+| `claude-haiku-4-5` | 1 | 0.20x |
+
+Las cifras de la seccion de Presupuestos —la revision con $8 de tope que gasto
+$1.97, el piso de $0.25— son de opus. Esa misma revision necesita $4.80 de tope
+con `claude-sonnet-5`, y $16 con `claude-fable-5`, para dar el mismo margen.
+
+Sonnet 5 tiene precio de estreno de $2/M hasta el 31-08-2026, que lo dejaria en
+0.40x. Contar con eso caduca; usar 0.60x.
+
+### Dos cosas que `modelo` no controla
+
+**El sidecar de Haiku.** Los ocho logs traen una segunda linea en `modelUsage`,
+`claude-haiku-4-5`, con 11-16k de entrada, unos 15 tokens de salida y
+$0.012-0.016. Son llamadas internas de Claude Code y `--model` no las toca. Es el
+1.2% del total, asi que no cambia ninguna decision, pero explica por que el
+`costo` de un log nunca cuadra con un calculo a mano sobre el modelo elegido.
+
+**La ventana de contexto es un acantilado, no una pendiente.** `claude-opus-5[1m]`
+tiene 1M; `claude-haiku-4-5`, 200K. Medido: `revision` promedio 57.7k de contexto
+por turno y `entrada` 61.6k, creciendo turno a turno. La revision es siempre la
+que mas lee —el plomo entero, todos los handoffs y el codigo ajeno que revisa— y
+es el primer sitio donde un modelo de ventana corta se rompe. **Se rompe
+cayendose, no dando peor calidad**, y a mitad de la ola mas cara de la tanda.
+Antes de bajarle el modelo a una revision, mirar su ventana.
+
+### La barra de opencode
+
+`claude` acepta un alias —`fable`, `opus`, `sonnet`, que apuntan al ultimo de su
+familia— o un nombre completo como `claude-fable-5`. `opencode` exige **siempre**
+`proveedor/modelo`, con la barra: `anthropic/claude-sonnet-5`.
+
+El validador no distingue entre los dos: `modelo: "opus"` es una cadena no vacia
+sin espacios, asi que pasa. En una tarea `claude` funciona; copiada a una tarea
+`opencode`, la rechaza el CLI, y la rechaza durante la corrida, con la ola ya
+lanzada y pagada.
+
+**Es deliberado y no se toca.** Validar la barra obligaria a Vitral a mantener un
+catalogo de lo que espera cada CLI, y ese catalogo caduca cada vez que uno de los
+dos saca version. Se paga a cambio de esto: al cerrar el boceto, repasar uno por
+uno los `modelo` de las tareas `opencode` buscando la barra.
+
+### Lo que este criterio todavia no puede decir
+
+Los dos CLI tienen mas perillas que el modelo, y el boceto no llega a ninguna.
+`claude` tiene `--effort` —low, medium, high, xhigh, max— y `--fallback-model`,
+que acepta una lista separada por comas para cuando el principal esta saturado;
+`opencode` tiene `--variant`, con el esfuerzo especifico del proveedor: minimal,
+high, max.
+
+Hoy no hay campo del boceto que las alcance, asi que **la unica palanca disponible
+es el escalon de modelo** y este criterio no habla de otra cosa. Cuando entren
+`esfuerzo` y `fallback`, la escalera de arriba se queda corta: bajar el esfuerzo
+de un modelo capaz y subir el modelo con esfuerzo bajo son dos formas distintas de
+gastar menos, y no son intercambiables. Es otra tanda, y su plomo empieza aqui.
+
+---
+
 ## Errores tipicos al planificar
 
 | Error | Como se detecta a tiempo |
@@ -470,6 +629,8 @@ pero la tarea siguiente se queda sin lo que necesitaba leer.
 | Una revision con menos tope que la suma de lo que revisa | Nadie lo detecta. Sumar a mano antes de cerrar el boceto |
 | Un tope por debajo de $0.25 | `--seco` avisa |
 | `presupuesto` en una tarea `opencode` | `--seco` avisa: se ignora |
+| Un `modelo` sin barra en una tarea `opencode` | Nadie lo detecta. El validador solo mira la forma; el CLI lo rechaza ya en la corrida, con la ola pagada. Repasar a mano los `modelo` de las tareas `opencode` |
+| Topes de presupuesto heredados de otro modelo | Nadie lo detecta. Al poner `modelo`, multiplicar todos los topes por la razon de tarifas de la tabla de modelos |
 | Un plomo de una tanda vieja que sigue en `.vitral/plomo/` | La cabecera de `--seco` dice cuantos archivos de plomo hay y cuanto pesan |
 | Un boceto ya ejecutado que sigue en `.vitral/boceto.json` | Nadie lo detecta. `node vitral.mjs` sin banderas lo relanza tal cual, y si su plomo ya se movio, los agentes corren sin contrato y el prompt no lo dice |
 | Un handoff viejo de un id que se repite entre tandas | Nadie lo detecta. `--solo` se salta las dependencias que tienen handoff en disco sin mirar de que tanda son, e inyecta el contenido viejo en el prompt del dependiente |
