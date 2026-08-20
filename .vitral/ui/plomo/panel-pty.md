@@ -18,7 +18,8 @@ Una ventana de escritorio con paneles de terminal dentro, donde se escriben coma
 y se ve su salida: con colores, con cursor, con Ctrl+C funcionando. Terminales de
 verdad, no cuadros de texto que imprimen lineas.
 
-Hoy hay **un** panel, a pantalla completa, con `powershell.exe` dentro.
+Hoy hay **hasta cuatro** paneles en una rejilla, cada uno con su `powershell.exe`
+dentro.
 
 ### Lo que hay que saber del motor, y es todo
 
@@ -32,16 +33,27 @@ Hoy hay **un** panel, a pantalla completa, con `powershell.exe` dentro.
 
 No se lee `.vitral/`. No se llama a `vitral.mjs`. No se importa nada de `src/`.
 
-### A donde va esto, para no cerrar la puerta
+### La puerta que se dejo abierta, y que ya se cruzo
 
-Habra una cuadricula de paneles, y un modo donde cada panel es un vidrio de una
-corrida. Por eso **todo va direccionado por `id`**, aunque hoy solo haya un panel y su
-id sea siempre `"1"`. Anadir la cuadricula tiene que ser un bucle en el frontend y
-CSS, sin tocar Rust.
+Cuando solo habia un panel, este contrato prometia que anadir la cuadricula seria "un
+bucle en el frontend y CSS, sin tocar Rust", porque todo iba direccionado por `id`
+desde el primer dia. **Se cumplio.** La cuadricula no cambio ni una letra de Rust ni
+del catalogo IPC: el mapa ya estaba direccionado por id, los comandos ya llevaban id,
+los eventos ya lo traian, y el vigia ya era uno por panel.
 
-Lo que **no** se hace en nombre de esa puerta: ni pestanas, ni divisiones, ni
-configuracion, ni guardar el scrollback, ni leer `.vitral/`. Codigo sin usar es codigo
-que hay que revisar igual.
+Conviene dejarlo escrito porque es la unica prueba que hay de que la disciplina sale
+a cuenta: el `HashMap` y el parametro `id` que durante dos tandas valieron siempre
+`"1"` parecian codigo sin usar, y eran justo lo contrario.
+
+### A donde va esto
+
+Queda **el modo corrida**: que cada panel sea un vidrio de una tanda, con el id de la
+tarea, su comando en vez de un shell suelto, y el estado leido de `.vitral/`. Eso es
+otra tanda y aqui no se prepara nada para ella, salvo lo que ya esta: los ids.
+
+Lo que **no** se hace mientras tanto: ni pestanas, ni divisiones arrastrables, ni
+configuracion, ni guardar el scrollback entre arranques, ni leer `.vitral/`. Codigo
+sin usar es codigo que hay que revisar igual.
 
 ---
 
@@ -152,6 +164,10 @@ import { FitAddon } from './vendor/addon-fit.mjs';
 
 Esta tabla es la **unica** fuente de los nombres que cruzan de Rust a JavaScript. Se
 copia literal en los dos lados: sin traducir, sin reordenar, sin renombrar.
+
+No ha cambiado desde que se escribio con un solo panel en pantalla, y la cuadricula no
+la toco: cuatro comandos con `id` y dos eventos con `id` bastan para N paneles igual
+que para uno.
 
 ### Comandos
 
@@ -436,37 +452,129 @@ permiso y solo ese.
 
 ## El frontend
 
-`ui/web/index.html` carga `vendor/xterm.css`, un contenedor y `panel.js` como modulo.
-Nada mas: sin barras, sin menus, sin botones. El panel ocupa la ventana entera.
+`ui/web/index.html` carga `vendor/xterm.css`, un contenedor de rejilla y `panel.js`
+como modulo. Nada mas: sin barras, sin menus, sin botones, sin titulos. La rejilla
+ocupa la ventana entera.
 
-`ui/web/panel.js` tiene una clase y una sola linea que la usa:
+`ui/web/panel.js` tiene dos piezas y una linea de arranque:
 
 ```js
 class Panel {
-  constructor(id, contenedor)
+  constructor(id, celda)   // un terminal y su PTY
 }
 
-new Panel('1', document.getElementById('panel'));
+const cuadricula = { ... }  // el registro: quien hay, quien manda, como se colocan
+
+cuadricula.abrir();          // el primer panel, al cargar
 ```
 
-Esa separacion entre la clase y su unico uso es toda la puerta que se deja abierta para
-la cuadricula. No se anade nada mas por si acaso.
+`Panel` no sabe que existe la rejilla; la rejilla no sabe que hay dentro de un panel.
+Esa frontera es lo que hara que el modo corrida pueda crear paneles con otro comando
+sin tocar la disposicion.
 
-Lo que hace una instancia:
+### El registro y el unico escuchador
+
+**Los escuchadores de Tauri se enganchan una sola vez, no uno por panel.** Con la
+cuadricula esto deja de ser estilo y pasa a ser correccion:
+
+- `listen()` devuelve la funcion para desengancharse, y hasta ahora ese valor se
+  tiraba. Con paneles que se abren y se cierran, cada panel cerrado dejaba dos
+  escuchadores vivos para siempre, escribiendo en un xterm que ya no esta en la
+  pagina.
+- Los eventos de Tauri llegan a **todos** los escuchadores, asi que N paneles con N
+  escuchadores hacen que cada trozo de salida se evalue N veces.
+
+Asi que hay **un** `listen('panel:salida')` y **un** `listen('panel:fin')`, montados
+al arrancar y nunca desmontados, que buscan el id en el registro y reparten:
+
+```js
+listen('panel:salida', ({ payload }) => {
+  const panel = cuadricula.paneles.get(payload.id);
+  if (panel) panel.escribir(payload.datos);
+});
+```
+
+Un evento cuyo id no esta en el registro **se ignora sin ruido**. Es lo normal, no un
+fallo: entre que un panel se cierra y su PTY se entera puede llegar un ultimo trozo.
+
+### Los ids
+
+Un contador que solo sube: `"1"`, `"2"`, `"3"`... **Un id no se reutiliza nunca**,
+aunque su panel se haya cerrado. Es lo que garantiza que `abrir_panel` no pueda chocar
+con una entrada que todavia no se ha limpiado en Rust, y de paso hace que los ids del
+log y los de la pantalla signifiquen lo mismo durante toda la sesion.
+
+### Que hace un panel
 
 1. `new Terminal({ ... })` con las opciones de abajo, y `term.loadAddon(fit)`.
-2. `term.open(contenedor)` y `fit.fit()`.
-3. Engancha los dos escuchadores **antes** de abrir el PTY: si se enganchasen despues,
-   lo primero que escribiera el shell podria llegar sin nadie oyendo.
+2. `term.open(celda)` y `fit.fit()`.
+3. Se registra en la cuadricula **antes** de abrir el PTY: si se registrase despues,
+   lo primero que escribiera el shell llegaria sin nadie a quien repartirselo.
 4. `invoke('abrir_panel', { id, filas, columnas })`.
-5. `panel:salida`: si el id del evento es el suyo, decodifica el base64 a `Uint8Array`
-   y llama a `term.write(bytes)`. **Se comprueba el id** aunque hoy solo haya uno: los
-   eventos de Tauri llegan a todos los escuchadores.
-6. `panel:fin`: marca el panel muerto y escribe la linea de cierre.
+5. `escribir(datos)`: decodifica el base64 a `Uint8Array` y llama a `term.write(bytes)`.
+6. `morir(codigo)`: marca el panel muerto y escribe la linea de cierre.
 7. `term.onData(...)` se engancha **despues** de que `abrir_panel` haya devuelto, para
    que no se pueda teclear antes de que el PTY este listo. En un panel muerto no manda
    nada.
-8. Un `resize` de la ventana llama a `fit.fit()` y despues a `redimensionar_panel`.
+
+### La disposicion
+
+Rejilla automatica: el numero de paneles decide la forma, y no hay nada que arrastrar
+ni que guardar.
+
+| Paneles | Forma | Aproximadamente, en la ventana de 1000x700 |
+|---|---|---|
+| 1 | uno a pantalla completa | 118 columnas x 41 filas |
+| 2 | dos columnas | 59 x 41 |
+| 3 | dos arriba, el tercero abajo ocupando el ancho | 59 x 20 los de arriba, 118 x 20 el de abajo |
+| 4 | 2x2 | 59 x 20 |
+
+**Con un numero impar, el ultimo se estira y ocupa el hueco.** No existe la celda
+vacia: no hay que dibujarla ni decidir que hace al pulsarla.
+
+**El tope son cuatro paneles**, y cuenta celdas, no procesos vivos: un panel muerto
+sigue ocupando la suya. Al llegar al tope, `Ctrl+Shift+N` **no hace nada** y no se
+muestra ningun aviso, porque el unico sitio donde se podria escribir es dentro de un
+terminal, y eso seria ensuciar contenido con mensajes de la aplicacion.
+
+El tope es cuatro por una cuenta, no por gusto: a 14px cada caracter ocupa unos
+8,4 x 17 px, asi que un 3x3 en esta ventana dejaria unas 39 columnas por 13 filas por
+panel. Treinta y nueve columnas no llegan para un prompt de PowerShell con la ruta
+entera mas el comando.
+
+### El reajuste
+
+**Un `ResizeObserver` por celda**, y ningun `window.addEventListener('resize')`. El
+observador cubre de una vez los dos casos, y el segundo es el que hoy no existe y
+seria un fallo silencioso:
+
+- La ventana cambia de tamano.
+- **El numero de paneles cambia**, y con el cambia el tamano de todas las celdas sin
+  que la ventana se haya movido. Un `resize` de ventana no se dispara aqui, asi que
+  sin observador los PTY se quedarian con las filas y columnas viejas y el texto
+  saldria partido donde no toca.
+
+Cuando una celda cambia de tamano: `fit.fit()` y despues `redimensionar_panel` con las
+filas y columnas nuevas. Al anadir o quitar un panel se reajustan **todos**, no solo
+el que entra o sale.
+
+### Crear, cerrar y el foco
+
+| Accion | Que pasa |
+|---|---|
+| Al cargar la pagina | Se abre un panel y se lleva el foco |
+| `Ctrl+Shift+N` | Abre uno mas, hasta el tope, y el nuevo se lleva el foco |
+| `Ctrl+Shift+W` | Cierra el enfocado. El foco pasa al anterior en orden, o al primero si era el primero |
+| `Ctrl+Shift+W` con un solo panel | **Se cierra la ventana.** Cerrar la ventana ya mata todos los paneles vivos: el camino de salida es el que ya existe y esta probado |
+| Clic en un panel | Ese panel recibe el foco |
+
+Cerrar un panel es `invoke('cerrar_panel', { id })` y quitar su celda del DOM. Si el
+panel ya estaba muerto, Rust responde `Err` de id desconocido porque el vigia ya quito
+la entrada: **se ignora**, la celda se quita igual.
+
+Los atajos se capturan en `attachCustomKeyEventHandler` de cada terminal y se delegan
+a la cuadricula. No valen en un `keydown` de `window`: el terminal enfocado se come las
+teclas antes de que lleguen ahi.
 
 ### Como se ve
 
@@ -481,8 +589,26 @@ Es contrato, no gusto personal: si no se escribe, cada agente elige otra cosa.
 | `theme.foreground` | `#cccccc` |
 | `scrollback` | `10000` |
 
-El `body` no tiene margen y el contenedor ocupa el 100% del ancho y del alto, con el
+El `body` no tiene margen y la rejilla ocupa el 100% del ancho y del alto, con el
 mismo fondo `#0c0c0c` para que no se vea un borde blanco al redimensionar.
+
+Y la rejilla:
+
+| Cosa | Valor |
+|---|---|
+| Separacion entre celdas | `2px` |
+| Borde de una celda | `2px` solido, siempre presente |
+| Borde de la celda enfocada | `#3b78ff` |
+| Borde de las demas | `#2a2a2a` |
+
+El borde esta **siempre**, y solo cambia de color. Si apareciera y desapareciera, cada
+cambio de foco moveria dos pixeles todas las celdas y dispararia el reajuste de todos
+los PTY sin ninguna razon.
+
+Con cuatro rectangulos negros iguales, el borde de foco y el propio prompt son lo unico
+que distingue un panel de otro. **No hay etiqueta ni titulo por panel, y es
+deliberado**: la etiqueta es justo lo que hara falta cuando un panel sea un vidrio y
+tenga el id de una tarea que mostrar, y eso es la tanda del modo corrida.
 
 ### El teclado
 
@@ -491,7 +617,18 @@ mismo fondo `#0c0c0c` para que no se vea un borde blanco al redimensionar.
 | Ctrl+C | **va al PTY**: interrumpe el proceso. No copia |
 | Ctrl+Shift+C | copia la seleccion al portapapeles |
 | Ctrl+Shift+V | pega el portapapeles en el PTY |
+| Ctrl+Shift+N | abre un panel mas, hasta el tope |
+| Ctrl+Shift+W | cierra el panel enfocado; si es el ultimo, cierra la ventana |
 | seleccion con el raton | la trae xterm de serie |
+| clic en un panel | le da el foco |
+
+**Los dos atajos nuevos hay que comprobarlos a mano.** La lista de teclas que WebView2
+se queda esta documentada —Ctrl+F, F3, Ctrl+P, Ctrl+R, F5, Ctrl+mas y Ctrl+menos,
+Ctrl+Shift+C, F12, y atras, adelante y buscar— y ni Ctrl+Shift+N ni Ctrl+Shift+W estan
+en ella; ademas, dentro de un webview embebido no hay ventana nueva ni pestana sobre la
+que puedan actuar. Pero la documentacion dice "incluyendo pero no limitado a", asi que
+la unica certeza es pulsarlas. **Si alguna no llega, el reemplazo escrito es
+`Ctrl+Alt+N` y `Ctrl+Alt+W`**, y es un cambio de tres lineas, no de diseno.
 
 Se implementa con `term.attachCustomKeyEventHandler`, que devuelve `false` para lo que
 maneja el frontend y `true` para todo lo demas. Copiar y pegar usan
@@ -546,7 +683,14 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 | Se cierra la ventana con procesos vivos | Se matan todos. No queda ningun `powershell.exe` huerfano |
 | Se cierra la ventana con el panel ya muerto | El vigia ya borro la entrada; no hay nada que matar y no es un error |
 | `cerrar_panel` gana la carrera al vigia | La entrada ya no esta cuando el vigia va a quitarla. No es un error, y `panel:fin` se emite igual, una sola vez |
-| Se redimensiona la ventana muy rapido | Cada `resize` llama a `fit()` y a `redimensionar_panel`. No hace falta amortiguarlo |
+| Se redimensiona la ventana muy rapido | Cada aviso del `ResizeObserver` llama a `fit()` y a `redimensionar_panel`. No hace falta amortiguarlo |
+| `Ctrl+Shift+N` con cuatro paneles ya abiertos | No hace nada, y no se muestra ningun aviso |
+| `Ctrl+Shift+N` con cuatro celdas de las que tres estan muertas | Tampoco: el tope cuenta celdas, no procesos vivos. Hay que cerrar alguna |
+| `Ctrl+Shift+W` sobre un panel ya muerto | Se quita la celda igual. Rust responde `Err` de id desconocido porque el vigia ya limpio, y se ignora |
+| `Ctrl+Shift+W` con un solo panel | Se cierra la ventana, que mata lo que quede vivo |
+| Se cierra el panel enfocado | El foco pasa al anterior en orden; al primero si era el primero |
+| Cambia el numero de paneles | Cambia el tamano de **todas** las celdas sin que la ventana se mueva. El `ResizeObserver` lo caza y se reajustan todos los PTY |
+| Llega `panel:salida` de un id que ya no esta en el registro | Se ignora sin ruido. Es lo normal entre que se cierra un panel y su PTY se entera |
 | `fit()` da 0 filas o 0 columnas | Se manda un minimo de 1 y 1. Un `PtySize` con ceros no es valido |
 | `powershell.exe` no se puede lanzar | `abrir_panel` devuelve `Err` con el texto del sistema y el frontend lo escribe en el panel. Nunca una ventana en blanco |
 | Salida enorme y muy rapida | Se emite segun se lee, en trozos de 4096. No se acumula ni se descarta |
@@ -566,7 +710,11 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 
 ## Lo que no entra, hasta que alguien lo pida
 
-- Cuadricula, pestanas, divisiones.
+- Pestanas, divisiones arrastrables, disposiciones a medida. La rejilla se calcula
+  sola a partir de cuantos paneles hay, y no se guarda entre arranques.
+- Mas de cuatro paneles. El tope esta puesto por una cuenta de caracteres, no por
+  miedo: subirlo pide antes una ventana mas grande o una fuente mas pequena.
+- Etiquetas o titulos por panel.
 - Nada que lea `.vitral/`.
 - Ningun `package.json` ni `node_modules`.
 - Ningun instalador, ningun juego de iconos.
@@ -604,6 +752,19 @@ comprobacion manual para que alguien la tache:
    respondiendo y el scrollback se conserva.
 7. Al cerrar la ventana no queda ningun `powershell.exe` vivo en el Administrador de
    tareas.
+8. **Ctrl+Shift+N abre un panel**, y la rejilla se reacomoda. Si no llega, probar el
+   reemplazo de la nota del teclado.
+9. **Ctrl+Shift+W cierra el enfocado**, y la rejilla se reacomoda. Con un solo panel,
+   cierra la ventana.
+10. Con dos, tres y cuatro paneles, el texto de cada uno se reajusta al cambiar el
+    numero: nada de lineas partidas ni de zonas muertas dentro de una celda.
+11. Al hacer clic en un panel, su borde se pone azul y el teclado va a ese; el cursor
+    solo parpadea en el enfocado.
+12. Con cuatro abiertos, Ctrl+Shift+N no hace nada.
+13. Con cuatro paneles escribiendo a la vez (por ejemplo, cuatro `ping -t localhost`),
+    la salida de cada uno va a su celda y ninguna se mezcla.
+14. Al cerrar la ventana con cuatro vivos no queda ningun `powershell.exe` en el
+    Administrador de tareas.
 
 ## De donde sale lo que dice este archivo
 
