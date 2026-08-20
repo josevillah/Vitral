@@ -65,6 +65,17 @@ function vitral(cwd, ...args) {
 
 const cuenta = (texto, patron) => (texto.match(patron) || []).length;
 
+// El prompt de una sola tarea, sacado de la salida de --seco. Los prompts van
+// separados por lineas de "=" y cada uno lleva su cabecera, asi que se corta por
+// ahi: un check que mirara la salida entera veria tambien los prompts de las
+// otras tareas de la corrida, que en este asunto dicen justo lo contrario.
+function promptDe(texto, id) {
+  const trozos = texto.split(/^={10,}\r?$/m);
+  const indice = trozos.findIndex((trozo) =>
+    trozo.includes('prompt · ola ') && trozo.includes(` · ${id} · agente `));
+  return indice === -1 ? null : trozos[indice + 1];
+}
+
 // ---------------------------------------------------------------------------
 // Los checks
 // ---------------------------------------------------------------------------
@@ -284,6 +295,79 @@ const checks = [
     const { codigo, texto } = vitral(trabajo, '--seco', '--boceto', boceto);
     if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}: la validacion nueva rechaza lo que antes funcionaba`;
     return cuenta(texto, /^prompt · ola/gm) === 1 ? null : 'no llego a armar el prompt de la tarea';
+  }],
+
+  // Los cuatro que siguen fijan que el preambulo no miente sobre el paralelismo.
+  // Un vidrio solo en su ola al que el prompt le afirma que hay otros agentes
+  // escribiendo se explica sus propias reescrituras buscando un segundo autor que
+  // no existe, y eso ya paso una vez. Todos van con --seco: el prompt se arma por
+  // el mismo camino que en la corrida real, que para eso ensayar y ejecutarOlas
+  // comparten promptDe.
+
+  ['un vidrio solo en su ola no lee que haya otros agentes', () => {
+    const { texto } = vitral(trabajo, '--seco');
+    const prompt = promptDe(texto, 'revision');
+    if (prompt === null) return 'no salio el prompt de revision';
+    if (!prompt.includes('eres el unico agente de esta ola')) {
+      return 'revision va sola en la ola 2 y su prompt no lo dice';
+    }
+    return prompt.includes('en paralelo ahora mismo') ? 'le afirma que hay otros editando a la vez' : null;
+  }],
+
+  ['un vidrio acompanado nombra a sus companeros', () => {
+    // a) dos en la ola: singular, y con el id del otro.
+    const dos = vitral(trabajo, '--seco');
+    const backend = promptDe(dos.texto, 'backend');
+    if (backend === null) return '(dos) no salio el prompt de backend';
+    if (!backend.includes('con otro agente, "frontend",')) {
+      return '(dos) no nombra a frontend en singular';
+    }
+
+    // b) tres independientes caen en una sola ola: plural, y con los otros dos.
+    const boceto = bocetoSuelto(trabajo, 'trio.json', { nombre: 'trio', tareas: [
+      { id: 'uno', rutas: ['a/'], prompt: 'x' },
+      { id: 'dos', rutas: ['b/'], prompt: 'y' },
+      { id: 'tres', rutas: ['c/'], prompt: 'z' },
+    ] });
+    const tres = vitral(trabajo, '--seco', '--boceto', boceto);
+    const companeros = { uno: ['dos', 'tres'], dos: ['uno', 'tres'], tres: ['uno', 'dos'] };
+    for (const [id, otros] of Object.entries(companeros)) {
+      const prompt = promptDe(tres.texto, id);
+      if (prompt === null) return `(tres) no salio el prompt de ${id}`;
+      if (!prompt.includes('con otros 2 agentes,')) {
+        return `(tres) el prompt de ${id} no dice que son tres en la ola`;
+      }
+      for (const otro of otros) {
+        if (!prompt.includes(`"${otro}"`)) return `(tres) el prompt de ${id} no nombra a "${otro}"`;
+      }
+    }
+    return null;
+  }],
+
+  ['--solo deja la ola en un vidrio y el texto lo refleja', () => {
+    // El boceto tiene tres tareas, pero backend no depende de nadie: la ola que
+    // se ejecuta es de una sola, y el prompt tiene que contarlo asi.
+    const { texto } = vitral(trabajo, '--seco', '--solo', 'backend');
+    const prompt = promptDe(texto, 'backend');
+    if (prompt === null) return 'no salio el prompt de backend';
+    return prompt.includes('eres el unico agente de esta ola') ? null
+      : 'corre solo, pero su prompt sigue hablando de companeros';
+  }],
+
+  ['las frases comunes siguen saliendo en los dos casos', () => {
+    // Bifurcar un texto es la forma clasica de perder por el camino una frase que
+    // valia para todos.
+    const { texto } = vitral(trabajo, '--seco');
+    const comunes = ['No hay a quien preguntarle',
+                     'Nunca esperes, nunca preguntes, nunca te quedes a medias'];
+    for (const id of ['backend', 'revision']) {
+      const prompt = promptDe(texto, id);
+      if (prompt === null) return `no salio el prompt de ${id}`;
+      for (const frase of comunes) {
+        if (!prompt.includes(frase)) return `el prompt de ${id} perdio: ${frase}`;
+      }
+    }
+    return null;
   }],
 ];
 

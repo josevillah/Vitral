@@ -23,8 +23,18 @@ import {
 // Cada cuanto decir que las tareas en curso siguen vivas.
 const LATIDO_MS = 60_000;
 
-const promptDe = (tarea, plan) =>
-  construirPrompt(tarea, plan.plomo.texto, handoffsDe(tarea, plan.handoffs, plan.incompletos));
+// Quien comparte ola con esta tarea, sin contarla a ella. La ola ya viene filtrada
+// por lo que de verdad se va a ejecutar: las saltadas por --solo no estan ahi, asi
+// que no cuentan como companeras. El orden es el de la ola, sin reordenar.
+const companerosDe = (tarea, ola) => ola.filter((t) => t.id !== tarea.id).map((t) => t.id);
+
+const promptDe = (tarea, plan, ola) =>
+  construirPrompt(
+    tarea,
+    plan.plomo.texto,
+    handoffsDe(tarea, plan.handoffs, plan.incompletos),
+    companerosDe(tarea, ola),
+  );
 
 // Sin esto son minutos de silencio absoluto y no hay forma de saber si los
 // agentes siguen vivos. Queda encerrado en una sola pieza para que nadie tenga
@@ -46,7 +56,7 @@ function abrirLatido(ancho) {
 // --seco: los mismos prompts que se enviarian, sin enviar nada.
 export function ensayar(plan) {
   for (const [indice, ola] of plan.olas.entries()) {
-    for (const tarea of ola) salida.imprimirPrompt(indice, tarea, promptDe(tarea, plan));
+    for (const tarea of ola) salida.imprimirPrompt(indice, tarea, promptDe(tarea, plan, ola));
   }
   salida.finEnsayo();
 }
@@ -68,7 +78,7 @@ export async function ejecutarOlas(plan) {
     const latido = abrirLatido(ancho);
 
     const deLaOla = await Promise.all(ola.map(async (tarea) => {
-      const prompt = promptDe(tarea, plan);
+      const prompt = promptDe(tarea, plan, ola);
 
       latido.empieza(tarea.id);
       const resultado = await ejecutarVidrio(tarea, prompt, raiz);

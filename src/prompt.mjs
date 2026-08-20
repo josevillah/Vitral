@@ -1,8 +1,8 @@
 // Todo el texto que lee un agente, y el bloque que devuelve.
 //
 // Este modulo es texto puro: no lee ni escribe archivos, no imprime, no ejecuta
-// nada. Recibe la tarea, el plomo ya leido y los handoffs ya cargados, y arma
-// una cadena.
+// nada. Recibe la tarea, el plomo ya leido, los handoffs ya cargados y los ids de
+// los companeros de ola, y arma una cadena.
 //
 // extraerHandoff() vive aqui a proposito: el modulo que le dice al agente "cierra
 // con ## Handoff" es el que sabe encontrarlo. Si cambia el formato, cambia en un
@@ -42,20 +42,62 @@ export function handoffsDe(tarea, handoffs, incompletos) {
   });
 }
 
-export function construirPrompt(tarea, plomo, handoffs) {
+// `"a"`, `"a" y "b"`, `"a", "b" y "c"`. Sin coma antes de la "y".
+const listarIds = (ids) => {
+  const entrecomillados = ids.map((id) => `"${id}"`);
+  if (entrecomillados.length === 1) return entrecomillados[0];
+  return `${entrecomillados.slice(0, -1).join(', ')} y ${entrecomillados[entrecomillados.length - 1]}`;
+};
+
+// Afirmar que hay otros agentes cuando no los hay no es inofensivo: un vidrio solo
+// en su ola se explica sus propias reescrituras buscando un segundo autor que no
+// existe. Por eso el parrafo se bifurca segun cuantos companeros tenga de verdad.
+const PARRAFO_COMPANEROS = (companeros) => {
+  if (companeros.length === 0) {
+    return (
+`Estas trabajando dentro de un vitral, pero eres el unico agente de esta ola: nadie
+mas esta escribiendo en este repositorio mientras trabajas. Si un archivo cambia
+bajo tus pies, has sido tu.`);
+  }
+
+  if (companeros.length === 1) {
+    return (
+`Estas trabajando dentro de un vitral: compartes esta ola con otro agente, ${listarIds(companeros)},
+que esta editando este mismo repositorio en paralelo ahora mismo, en su propia tarea.
+El codigo que tienes al lado puede estar cambiando mientras trabajas.`);
+  }
+
+  return (
+`Estas trabajando dentro de un vitral: compartes esta ola con otros ${companeros.length} agentes,
+${listarIds(companeros)}, que estan editando este mismo repositorio en paralelo
+ahora mismo, cada uno en su propia tarea. El codigo que tienes al lado puede estar
+cambiando mientras trabajas.`);
+};
+
+// Fuera de sus rutas manda el reparto igual, pero el motivo no es el mismo cuando
+// no hay nadie mas escribiendo.
+const FRASE_RUTAS = (companeros) => (companeros.length > 0
+  ? 'Esos archivos son de otro agente y tus cambios chocarian con los suyos.'
+  : `Nadie mas esta escribiendo ahora mismo, pero las rutas no son una sugerencia: son
+el reparto que decidio quien planifico la tanda.`);
+
+// `companeros` son los ids de las OTRAS tareas de la misma ola, sin la propia. El
+// valor por defecto es el texto verdadero de una llamada suelta: un llamador que
+// lo olvide dice "estas solo", que nunca inventa companeros.
+export function construirPrompt(tarea, plomo, handoffs, companeros = []) {
   const bloques = [];
 
   bloques.push(
 `# Vitral · tarea "${tarea.id}"
 
-Estas trabajando dentro de un vitral: varios agentes editan este mismo repositorio
-en paralelo, ahora mismo, cada uno en su propia tarea. No hay a quien preguntarle.
-No puedes hablar con los otros agentes ni esperar respuesta de nadie: el codigo que
-tienes al lado puede estar cambiando mientras trabajas.
+${PARRAFO_COMPANEROS(companeros)}
 
-Todo lo que necesitas para encajar con ellos ya esta escrito abajo, en el plomo.
-Si algo no esta en el plomo, decidelo tu por la via mas conservadora y anotalo en
-tu handoff. Nunca esperes, nunca preguntes, nunca te quedes a medias.`);
+No hay a quien preguntarle: no puedes hablar con nadie ni esperar respuesta de
+nadie.
+
+Todo lo que necesitas para encajar ya esta escrito abajo, en el plomo. Si algo no
+esta en el plomo, decidelo tu por la via mas conservadora y anotalo en tu handoff.
+Nunca esperes, nunca preguntes, nunca te quedes a medias.`);
 
   bloques.push(
 `## El plomo · contrato compartido · fuente de verdad obligatoria
@@ -65,7 +107,8 @@ campos, forma de los JSON, rutas y metodos de los endpoints se respetan al pie d
 la letra, aunque te parezcan mejorables. Si tu codigo y el plomo no coinciden, el
 que esta mal es tu codigo.
 
-Programa contra el plomo aunque la otra mitad todavia no exista.
+Programa contra el plomo aunque la pieza que tiene que encajar con la tuya todavia
+no exista.
 
 ${plomo || '(no hay contratos declarados: no existe el directorio plomo/ o esta vacio)'}`);
 
@@ -81,10 +124,11 @@ Solo puedes crear o modificar archivos dentro de:
 
 ${tarea.rutas.map((ruta) => `- ${ruta}`).join('\n')}
 
-Fuera de ahi puedes leer todo lo que quieras, pero no escribir nada. Esos archivos
-son de otro agente y tus cambios chocarian con los suyos. Si crees que hace falta
-tocar algo fuera de tus rutas, no lo toques: anotalo en tu handoff, en "Necesito de
-otros". Al final de la corrida se revisa si algo quedo fuera de lo declarado.`);
+Fuera de ahi puedes leer todo lo que quieras, pero no escribir nada.
+${FRASE_RUTAS(companeros)}
+Si crees que hace falta tocar algo fuera de tus rutas, no lo toques: anotalo en tu
+handoff, en "Necesito de otros". Al final de la corrida se revisa si algo quedo
+fuera de lo declarado.`);
 
   if (handoffs.length > 0) {
     const texto = handoffs
@@ -107,9 +151,9 @@ ${texto}`);
   bloques.push(
 `## Como terminar
 
-Cierra tu respuesta con este bloque, con estos cuatro campos y ningun otro. Es lo
-unico que van a leer los agentes que vengan despues de ti, asi que se concreto:
-nombres de archivos, nombres de campos, rutas reales.
+Cierra tu respuesta con este bloque, con estos cuatro campos y ningun otro.
+Lo van a leer las tareas que vengan despues de ti y la persona que revise la
+corrida, asi que se concreto: nombres de archivos, nombres de campos, rutas reales.
 
 ## Handoff
 

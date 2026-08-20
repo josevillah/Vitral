@@ -288,16 +288,22 @@ saber que existen las olas o el latido, imprimir.
 ### `src/prompt.mjs`
 
 ```
-construirPrompt(tarea, plomo, handoffs) -> string
+construirPrompt(tarea, plomo, handoffs, companeros) -> string
 handoffsDe(tarea, handoffs, incompletos) -> [{ id, estado, contenido }]
 extraerHandoff(texto) -> string | null
 ```
+
+`companeros` es un array de ids (`string[]`): las **otras** tareas de la misma
+ola, sin la propia. Vacio significa que este vidrio esta solo en su ola. Lleva
+`= []` por defecto, asi que un llamador que lo olvide produce el texto de "solo",
+que es verdad para una llamada suelta y no inventa companeros. El dato entra por
+parametro porque `prompt.mjs` es una hoja del grafo y no va a buscarlo.
 
 Texto puro. Los bloques del prompt van en este orden y este orden importa:
 aviso de paralelismo, plomo, tarea, rutas, handoffs de las dependencias,
 instruccion de cierre.
 
-Dos reglas de contenido que se rompieron una vez y costaron caro:
+Tres reglas de contenido que se rompieron una vez y costaron caro:
 
 1. **El bloque del plomo y el de los handoffs no pueden contradecirse.** La regla
    es la misma en los dos sitios: manda el plomo. Si una tarea anterior se
@@ -305,6 +311,12 @@ Dos reglas de contenido que se rompieron una vez y costaron caro:
 2. **Un handoff que falta se dice como ausencia**, con voz de sistema y
    encabezado propio (`estado: 'ausente'` o `'incompleto'`), nunca como si fuera
    contenido dejado por otro agente.
+3. **El preambulo no puede afirmar paralelismo sin condicion.** Con `companeros`
+   vacio dice `eres el unico agente de esta ola`; solo con companeros afirma que
+   el codigo de al lado puede estar cambiando. En la tanda del panel PTY, un
+   vidrio solo en su ola se explico sus propias reescrituras escribiendo en el
+   handoff que otro agente le habia pisado `main.rs` y `panel.js`, con mtimes y
+   todo, porque el prompt le afirmaba sin condicion que ese otro agente existia.
 
 `extraerHandoff` vive aqui a proposito: el modulo que le dice al agente "cierra
 con `## Handoff`" es el que sabe encontrarlo. Si cambia el formato, cambia en un
@@ -378,6 +390,14 @@ detiene ahi y devuelve las fallidas: **no** termina el proceso.
 `ensayar` y `ejecutarOlas` comparten el armado del prompt (`promptDe`) a
 proposito. Si el modo seco tuviera su propio camino, podria mentir sobre lo que
 se va a ejecutar de verdad.
+
+`promptDe(tarea, plan, ola)` recibe la ola que los bucles de `ensayar` y de
+`ejecutarOlas` ya tienen en la mano, filtra de ella la tarea propia y le pasa a
+`construirPrompt` los ids de las demas como `companeros`. Ese es el unico sitio
+donde se calculan: `prompt.mjs` no sabe que existen las olas. El orden de los ids
+es el de la ola, sin ordenar ni reordenar, y es determinista porque
+`calcularOlas` lo es. Las tareas saltadas por `--solo` no estan en la ola, asi
+que no cuentan como companeras.
 
 **El latido vive aqui y solo aqui.** Es el unico modulo que sabe que existe una
 ola y que vidrios siguen en vuelo. `proceso.mjs` ejecuta uno y no sabe de olas;

@@ -177,8 +177,12 @@ boceto, haya handoffs en disco o no.
 El prompt se le pasa **por stdin**, nunca como argumento, y se arma con estos
 bloques en este orden:
 
-1. Aviso de que hay otros agentes tocando el repo ahora mismo y no hay a quien
-   preguntarle.
+1. Un aviso cuyo contenido depende de cuantas tareas tiene su ola. Un vidrio que
+   corre solo lee que `eres el unico agente de esta ola` y que `si un archivo
+   cambia bajo tus pies, has sido tu`. Uno acompanado lee a quienes le acompanan,
+   nombrados por su id, y que `el codigo que tienes al lado puede estar cambiando
+   mientras trabajas`. Lo comun a los dos casos: no hay a quien preguntarle, ni
+   que esperar a nadie.
 2. **El plomo**, entero, marcado como fuente de verdad obligatoria.
 3. Su tarea.
 4. Sus rutas, con la instruccion de no salirse de ellas.
@@ -187,7 +191,8 @@ bloques en este orden:
    **Hice** · **Decidi** · **Me desvie** · **Necesito de otros**.
 
 Ese bloque se extrae de la respuesta y se guarda en `.vitral/handoffs/<id>.md`.
-Es lo unico que los agentes posteriores leen del trabajo anterior.
+Lo leen las tareas que vengan despues y la persona que revise la corrida, y es
+lo unico que unas y otra ven del trabajo anterior sin ir al codigo.
 
 El bloque del plomo y el de los handoffs no pueden contradecirse, o el agente
 acaba decidiendo solo. La regla es una sola en los dos sitios: **manda el plomo**.
