@@ -23,10 +23,22 @@ escribe los contratos y el boceto, y se aparta.
 claro como hay que implementar algo, eso va al plomo como contrato, no al
 repositorio como codigo.
 
-**Solo escribe dentro de `.vitral/`**, y en la practica solo dos sitios:
-`.vitral/plomo/*.md` y el boceto. Nada mas. Ni `src/`, ni `README.md`, ni
-`.gitignore` —aunque el plan lo necesite: eso se anota como pendiente para la
-persona, porque es justo el tipo de cosa que un plomo da por hecha y nadie hace.
+**Solo escribe dentro de `.vitral/`**, y en la practica en tres sitios:
+`.vitral/plomo/*.md`, el boceto, y `.vitral/maquetas/<tanda>/` mientras dura la sesion.
+Nada mas. Ni `src/`, ni `README.md`, ni `.gitignore` —aunque el plan lo necesite: eso se
+anota como pendiente para la persona, porque es justo el tipo de cosa que un plomo da
+por hecha y nadie hace.
+
+**La unica excepcion, y tiene forma estrecha:** puede escribir fuera de `.vitral/`
+**cuando la persona se lo pide para archivos concretos y nombrados**, y solo esos. Nunca
+por iniciativa propia, nunca "ya que estaba", nunca ampliando de un archivo pedido a su
+carpeta. Y **se dice en voz alta al hacerlo**, para que no aparezca por sorpresa en un
+diff.
+
+Salio de una sesion real: la persona pidio ajustar `ui/src-tauri/Cargo.toml` y
+`ui/src-tauri/capabilities/default.json`, los dos por su nombre. Se hicieron y se dijo
+que se estaba cruzando la linea. Esa es la forma correcta; la regla ahora la recoge en
+vez de dejarla a criterio.
 
 Escribir incluye mover y borrar: al cerrar una tanda, retirar el plomo y borrar el
 boceto y sus handoffs cae dentro de ese mismo permiso y del mismo directorio.
@@ -52,9 +64,9 @@ planificador participa en el primero y en el tercero. El segundo es de la person
 
 | Momento | Rama | Que cambia en disco |
 |---|---|---|
-| **Abrir** | `feat/<tanda>` | Se escriben `.vitral/boceto.json` y `.vitral/plomo/<tanda>.md` |
+| **Abrir** | `feat/<tanda>` | Se escriben `.vitral/boceto.json` y `.vitral/plomo/<tanda>.md`. Si hubo fase visual, tambien `.vitral/maquetas/<tanda>/`, que no se versiona |
 | **Ejecutar y verificar** | la misma `feat/<tanda>` | Lo que escriban los agentes. Se verifica y se mergea a `main` |
-| **Cerrar** | `chore/retirar-<tanda>` | El plomo se mueve a `.vitral/plomo/retirados/`, y se borran el boceto y los handoffs de la tanda |
+| **Cerrar** | `chore/retirar-<tanda>` | El plomo se mueve a `.vitral/plomo/retirados/`, y se borran el boceto, los handoffs y las maquetas de la tanda |
 
 **Los nombres de rama son normativos.** No es capricho: en `git log` distinguen de un
 vistazo que commit hizo trabajo y cual solo limpio. Salen del historial real, no de
@@ -106,7 +118,7 @@ lee para decidir nada, y la corrida siguiente que use ese id los pisa. Se quedan
 | Quien | Que |
 |---|---|
 | La persona | Crea la rama `chore/retirar-<tanda>` **antes** de que se toque nada |
-| El planificador | Mueve el plomo a `retirados/`, borra el boceto, borra los handoffs de los ids de la tanda |
+| El planificador | Mueve el plomo a `retirados/`, borra el boceto, borra los handoffs de los ids de la tanda y borra `.vitral/maquetas/<tanda>/` |
 | La persona | Revisa, commitea y mergea |
 
 El planificador mueve con un movimiento de archivo normal, no con `git mv`: git
@@ -254,8 +266,8 @@ ahora:
 
 ```
 Cuando esto este mergeado en main, la tanda se cierra en chore/retirar-<tanda>:
-retirar .vitral/plomo/<tanda>.md a retirados/, borrar .vitral/boceto.json y
-borrar los handoffs de <ids de la tanda>.
+retirar .vitral/plomo/<tanda>.md a retirados/, borrar .vitral/boceto.json,
+borrar los handoffs de <ids de la tanda> y borrar .vitral/maquetas/<tanda>/.
 ```
 
 Si en la tanda entra ademas un contrato permanente, o algo que el planificador no
@@ -284,6 +296,10 @@ siguiente vidrio sin contrato.
    tareas, que hacen falta en el paso siguiente.
 5. **Borrar `.vitral/handoffs/<id>.md`** de esos ids, y tambien sus
    `<id>.INCOMPLETO.md` si quedo alguno. Los logs no.
+5b. **Borrar `.vitral/maquetas/<tanda>/` entero.** Es material de una sesion que ya
+   decidio: lo que se eligio esta en la tabla del plomo, y la maqueta a partir de aqui
+   solo puede envejecer mal. Una maqueta que no coincide con lo implementado sigue
+   pareciendo verdad, que es justo lo que la hace peligrosa.
 6. **Decir que queda para la persona:** commitear en `chore/retirar-<tanda>` y
    mergear. Y si el cierre revelo algo —un pendiente que nadie hizo, un contrato que
    habria que promover a permanente—, decirlo aqui, que es la ultima oportunidad.
@@ -301,7 +317,10 @@ simple vista. Esta fase no trae ningun principio nuevo: es la pregunta que cierr
 la lista de mas abajo —*¿hay algo que importe que salga igual y que el contrato no
 este diciendo?*— aplicada al sitio donde falla mas veces y mas rapido.
 
-Produce una sola cosa: la tabla "Como se ve" del plomo, con valores literales.
+Produce dos cosas, en este orden: **una maqueta que se mira** para decidir, y la tabla
+"Como se ve" del plomo, con valores literales, que es lo que sobrevive. La tabla se
+escribe **despues** de elegir, nunca antes: es el registro de la decision, no su
+soporte.
 
 ### Cuando aplica
 
@@ -343,7 +362,7 @@ fuente quieres?" no le sirve de nada a nadie. La regla que reparte es una sola:
 | Cosa | Quien | Como se resuelve |
 |---|---|---|
 | Tema: claro, oscuro o los dos | La persona | Se pregunta. Es gusto, y ademas condiciona todo lo demas |
-| Paleta | La persona | El planificador propone dos o tres completas; ella elige una |
+| Paleta | La persona | El planificador dibuja una maqueta con tres variantes de un mismo eje; ella elige mirando, no leyendo |
 | Tipografia | El planificador | Propone una combinacion; ella confirma |
 | Escala de espaciado | El planificador | La fija. No hay nada que preguntar |
 | Estados | El planificador | Los enumera y los fija. Tampoco hay nada que preguntar |
@@ -376,15 +395,147 @@ y una vez dicha, el fondo oscuro que ya era contrato dejo de ser "terminal sobri
 ser el plomo entre los vidrios. Eso no se deduce desde fuera y no hay forma de acertarlo
 proponiendo.
 
-### Como se propone
+### La maqueta: se elige mirando, no leyendo
 
-Aqui es donde la fase se estropea si se hace mal. **Se proponen paletas completas
-y con valores, no adjetivos.** Una paleta "sobria y profesional" no es una paleta:
-es la misma nada que "ya lo iremos viendo", y acaba igual, con tres agentes
-eligiendo tres cosas distintas.
+**Una paleta en hexadecimal no la puede evaluar nadie.** Ni la persona que planifica ni
+el planificador. Se aprueba leyendo, se implementa al pie de la letra, y el error
+aparece cuando ya hay una ventana delante y el dinero gastado.
 
-Lo que se pone delante de la persona son dos o tres bloques cerrados, cada uno con
-todos sus valores, listos para copiar:
+Esta es la parte de la fase que salio de un fallo entero, y conviene contarlo porque
+explica que hay que dibujar y por que:
+
+En la tanda de proyectos se propusieron tres paletas como tablas de diez tokens. La
+persona eligio una leyendo. Al abrir la ventana, **la barra lateral no se distinguia del
+fondo de la rejilla**. Medido despues: `barra-fondo #0e0e0a` contra el `#0c0c0c` del
+terminal da **1.01 : 1**. No es que se distinguiera poco; es que no se distinguia. Y las
+otras dos paletas daban 1.02 y 1.03, asi que **no habia eleccion buena**: el eje que
+importaba no lo variaba ninguna.
+
+Lo que hay debajo es un agujero de la tuberia entera: **el codigo se comprueba contra el
+contrato, y el contrato no se comprueba contra nada.** Los agentes copiaron
+`--barra-fondo: #0e0e0a` letra por letra, que es lo que se les pide. La revision comparo
+codigo con contrato y aprobo, correctamente. El unico momento en que un ojo humano ve el
+resultado es despues de la corrida.
+
+**La maqueta mueve ese momento a antes.** Ese es su argumento, y es mas fuerte que "se
+elige mejor mirando".
+
+#### Que es
+
+Un archivo `.html` suelto. **Sin servidor, sin npm, sin compilar, sin red.** CSS en
+linea, y las familias tipograficas del contrato, que ya son de sistema. Un archivo por
+ronda, con las variantes **lado a lado dentro del mismo archivo**: separarlas en
+archivos obliga a alternar ventanas, y alternar destruye la comparacion, que es todo el
+proposito.
+
+#### Como se abre
+
+Dos caminos, y ninguno levanta nada:
+
+- **Doble clic** sobre el archivo en el explorador. `.vitral/` no esta oculto en
+  Windows: el punto delante es costumbre de Unix y el explorador lo lista igual.
+- **Desde un panel de terminal**, con la ruta relativa a la raiz del proyecto:
+
+```
+start .vitral/maquetas/<tanda>/paletas.html
+```
+
+`start` es alias de `Start-Process` en la PowerShell que corren los paneles —verificado
+en Windows PowerShell 5.1, que es la de esta maquina— y abre el archivo con el navegador
+por defecto. `ii`, alias de `Invoke-Item`, hace lo mismo si `start` diera guerra.
+
+**Y el planificador termina la ronda diciendo las dos cosas: la ruta exacta y la orden
+exacta, ya rellenadas.** No "abre la maqueta": la linea entera, lista para pegar. Un
+archivo que nadie sabe abrir no se mira, y una maqueta que no se mira no sirve de nada,
+que es de donde venimos.
+
+#### No se reparte entre agentes
+
+**La maqueta la escribe el planificador, en la sesion, de una sentada.** No es trabajo de
+tanda y no se descompone: no hay agentes, no hay olas, no hay boceto.
+
+La tentacion es evidente —tres variantes, tres agentes en paralelo— y es exactamente el
+fallo de hoy otra vez. Las tres variantes son **tres pasos sobre un mismo eje**, y eso
+solo significa algo si una sola cabeza decide donde cae "poco", donde "bien" y donde
+"demasiado". Tres agentes ciegos, que por definicion no pueden hablarse, elegirian cada
+uno su propio "poco": volverian tres matices sueltos, que es precisamente lo que hundio
+la tanda de proyectos.
+
+Es la regla madre de este archivo aplicada a la propia fase: **la variabilidad se
+concentra donde el contrato calla**, y en una escala de tres pasos lo que el contrato no
+puede decir es cuanto vale cada paso.
+
+Viven en `.vitral/maquetas/<tanda>/`. No son contrato ni codigo: son material de trabajo
+de una sesion. **No se versionan** —van en `.gitignore` junto a `logs/` y `handoffs/`,
+por el mismo reparto de siempre: el plan y el contrato se versionan, lo que produce una
+corrida no— y **se borran al cerrar la tanda**, con los handoffs.
+
+Se borran por la misma razon por la que un plomo que miente es peor que un plomo que
+falta: una maqueta caduca en cuanto la implementacion se desvia, y sigue pareciendo
+verdad. Guardar la elegida como evidencia, al estilo de `procedencia.md`, se penso y se
+descarto: procedencia guarda **medidas que siguen siendo ciertas**; una maqueta guarda
+una **prediccion** que la implementacion cumple o supera.
+
+#### Cuantas variantes: un eje, tres pasos, y el eje se dice
+
+Ni diez ni tres por comodidad. La regla sale del fallo de arriba:
+
+> **Una ronda varia UN eje, en TRES pasos, y el eje se nombra en voz alta.**
+
+- **Un eje**, porque es lo que hace la comparacion contestable. Las tres paletas de la
+  tanda de proyectos variaban el matiz y compartian la separacion: tres respuestas a una
+  pregunta que nadie habia hecho.
+- **Tres pasos**, porque es el minimo que **acota**: poco, bien, demasiado. Con dos no se
+  sabe si la respuesta cae fuera del par. Con cuatro seguidos sobre un mismo eje, la
+  diferencia entre vecinos baja del umbral en que elegir significa algo.
+- **El eje dicho en voz alta**, porque permite la respuesta que de verdad hacia falta:
+  *"eje equivocado"*. Ninguna cantidad de variantes arregla estar variando lo que no es.
+  Diez tampoco: diez obliga a sostener diez diferencias sin nombre a la vez.
+
+Segunda ronda solo si la primera no cierra. Salen baratas: renderizar es un bucle sobre
+un juego de tokens.
+
+#### Que se dibuja
+
+**Todos los estados que el contrato enumere**, etiquetados, en una columna. No solo el
+aspecto normal. En la tanda de proyectos, `no-disponible` quedo contratado a 2.5 : 1 con
+la nota "a proposito, tiene que verse apagado" — y nadie sabe si 2.5 : 1 es apagado o es
+invisible, porque nadie lo dibujo. Si un estado es una interaccion que no se congela,
+como el hover, se dibuja en reposo y se etiqueta.
+
+**Las pantallas completas, no solo los tokens.** Los estados vacios y los de error son
+superficies enteras, y en esa tanda se aprobaron como filas de texto de una tabla.
+
+Y de ahi sale una comprobacion de cinco segundos: **la maqueta y la tabla de estados son
+la misma lista.** Un estado que este en una y no en la otra significa que una de las dos
+esta incompleta.
+
+#### Cuando la superficie es una terminal
+
+El contrato ya exige bloques de salida literal, regenerados llamando a la funcion real.
+**La maqueta de terminal es ese mismo bloque con la paleta aplicada**: un `<pre>` al
+ancho real, con la monoespaciada del contrato, sobre el fondo del terminal, y los
+colores como `<span>`.
+
+Cuesta casi nada y comprueba lo que el bloque en texto plano no puede: si el verde y el
+rojo se leen sobre el fondo **y entre si**, y si la alineacion de columnas aguanta al
+ancho de verdad.
+
+Dos cosas que tiene que ensenar y que el bloque de texto nunca ensena:
+
+- **El modo sin color al lado.** Es un estado contratado —`src/salida.mjs` vacia la
+  paleta entera cuando no hay TTY— y nadie lo ha mirado nunca.
+- **La salida sobre el fondo en el que va a aparecer**, no sobre papel blanco.
+
+### Como se escribe la paleta, ya elegida
+
+Elegida mirando la maqueta, se escribe. **Con valores, no con adjetivos.** Una paleta
+"sobria y profesional" no es una paleta: es la misma nada que "ya lo iremos viendo", y
+acaba igual, con tres agentes eligiendo tres cosas distintas.
+
+El bloque cerrado sigue existiendo, pero **cambio de sitio**: ya no es lo que se pone
+delante de la persona para que decida —eso es la maqueta— sino lo que se lleva al plomo
+despues, para que un agente lo copie sin interpretar:
 
 ```
 A · Grafito           B · Pergamino
@@ -397,10 +548,11 @@ error      #f14c4c    error      #c0392b
 aviso      #e5c07b    aviso      #b8860b
 ```
 
-Ella elige una letra. No rellena un hueco, no busca un color, no aprende nada de
-diseno. Y si dice "la A pero el acento mas apagado", eso es una eleccion valida:
-el planificador cierra el valor nuevo y repite el bloque entero, para que lo que
-se lleva al plomo siga siendo una paleta completa y no un parche.
+En la maqueta la persona elige una letra. No rellena un hueco, no busca un color, no
+aprende nada de diseno. Y si dice "la A pero el acento mas apagado", eso es una eleccion
+valida: el planificador cierra el valor nuevo, **lo vuelve a dibujar** y repite el
+bloque entero, para que lo que se lleva al plomo siga siendo una paleta completa y no un
+parche.
 
 **El numero de colores sale de los estados, no al reves.** Primero se enumera que
 estados tiene la superficie; despues se propone una paleta que los cubra todos. Al
@@ -413,11 +565,24 @@ la persona cuales son antes de que elija, porque son la restriccion real: en la 
 proyectos, cuatro valores del terminal ya estaban fijados y la barra lateral tenia que
 nacer dentro de esos cuatro.
 
-**Los contrastes se miden, no se estiman.** Cuesta un minuto y evita fijar en el
-contrato un texto secundario que no se lee. En esa misma tanda, el `texto-tenue` de las
-tres propuestas se quedaba entre 3.6 y 3.8 sobre su fondo, por debajo del minimo de 4.5,
-y se corrigio antes de ensenarlas. El estado deshabilitado es la excepcion y va por
-debajo a proposito: tiene que verse apagado.
+**Los contrastes se miden, no se estiman, y son dos familias, no una.**
+
+1. **Legibilidad**: cada texto contra el fondo sobre el que se pinta. Minimo 4.5 para
+   texto normal, 3.0 para texto grande y elementos de interfaz. El estado deshabilitado
+   es la excepcion y va por debajo a proposito: tiene que verse apagado.
+2. **Separacion**: cada superficie contra **la superficie de al lado**. Una barra
+   lateral contra el fondo del contenido, una tarjeta contra la pagina, una celda
+   enfocada contra sus vecinas.
+
+**La segunda es la que se olvida, y es la que hundio la tanda de proyectos.** Alli se
+midieron seis ratios de legibilidad, todos correctos —el `texto-tenue` se quedaba entre
+3.6 y 3.8 y se subio antes de ensenar nada—, y **cero de separacion**. La barra lateral
+quedo a 1.01 : 1 del fondo de la rejilla, que es lo mismo que decir que no existia. Medir
+solo la primera familia da la sensacion de haber medido, y esa sensacion es peor que no
+medir, porque cierra la pregunta.
+
+Con la maqueta delante, la separacion se ve sin calcular nada. La cuenta sigue valiendo
+para saber **cuanto** hay que separar; la maqueta, para saber **si** hace falta.
 
 ### Lo que se fija sin preguntar
 
@@ -874,6 +1039,9 @@ gastar menos, y no son intercambiables. Es otra tanda, y su plomo empieza aqui.
 | Topes de presupuesto heredados de otro modelo | Nadie lo detecta. Al poner `modelo`, multiplicar todos los topes por la razon de tarifas de la tabla de modelos |
 | Una tanda con superficie visible y sin tabla "Como se ve" | Nadie lo detecta, y el plan sale igual de convincente. Solo se caza en la fase 3 |
 | Una paleta propuesta en adjetivos | Nadie lo detecta. "Sobria y profesional" no es una paleta: se proponen bloques cerrados con todos los valores |
+| Una paleta aprobada leyendo hexadecimales, sin dibujarla | Nadie lo detecta, y la revision tampoco: compara el codigo con el contrato, y el contrato es el que esta mal. Se ve al abrir la ventana, con la corrida ya pagada |
+| Contrastes medidos solo de texto | Nadie lo detecta. Falta la otra familia: cada superficie contra la de al lado. En la tanda de proyectos eso fue 1.01 : 1 |
+| Tres variantes que varian el eje equivocado | Nadie lo detecta, y mas variantes no lo arreglan. Una ronda, un eje, tres pasos, y el eje se nombra |
 | Proponer paletas sin preguntar antes si ya hay direccion | Nadie lo detecta, y el coste lo paga la persona teniendo que frenar al planificador. Es la primera pregunta de la fase 3 |
 | Proponer colores sin mirar los que ya son contrato | Nadie lo detecta. Si hay superficie entregada, sus valores son la restriccion de entrada y se dicen antes de que la persona elija |
 | Un plomo de una tanda vieja que sigue en `.vitral/plomo/` | La cabecera de `--seco` dice cuantos archivos de plomo hay y cuanto pesan |

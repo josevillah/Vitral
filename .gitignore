@@ -19,3 +19,6 @@ seco.txt
 # La interfaz: lo que produce cargo y lo que genera tauri.
 ui/src-tauri/target/
 ui/src-tauri/gen/
+
+# Maquetas de la fase visual: material de sesion, no contrato.
+.vitral/maquetas/
