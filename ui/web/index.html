@@ -5,6 +5,29 @@
     <title>Vitral</title>
     <link rel="stylesheet" href="vendor/xterm.css" />
     <style>
+      /* Paleta Vidriera. Un vitral es vidrio de color separado por plomo: el fondo
+         oscuro es el plomo, y el color solo aparece en lo que esta vivo.
+
+         Los dos amarillos y el lima significan cosas distintas y no se
+         intercambian: `activo-texto` es "lo que esta activo ahora" -el nombre del
+         proyecto activo y el borde del panel enfocado, el mismo amarillo a
+         proposito- y `activo-marca` marca cual es el proyecto activo, no donde
+         esta el foco, asi que solo aparece en la barra y nunca en la rejilla. */
+      :root {
+        --barra-fondo: #0e0e0a;
+        --barra-borde: #262218;
+        --texto: #d0cbbd;
+        --texto-tenue: #847c69;
+        --hover-fondo: #17140c;
+        --activo-fondo: #201a0c;
+        --activo-marca: #bef264;
+        --activo-texto: #fde047;
+        --no-disponible: #5a5347;
+        --error: #ef4444;
+
+        --fuente-barra: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+      }
+
       html,
       body {
         margin: 0;
@@ -15,9 +38,187 @@
         background: #0c0c0c;
       }
 
-      /* La rejilla ocupa la ventana entera: ni barras, ni menus, ni titulos. La
-         clase `paneles-N` la pone la cuadricula; el CSS es quien la interpreta. */
-      #cuadricula {
+      /* La barra y la zona de rejillas se reparten el ancho; juntas ocupan la
+         ventana entera. Sin menus, sin botones de ventana, sin titulos. */
+      #app {
+        display: flex;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* ---------------------------------------------------------------- barra */
+
+      #barra {
+        display: flex;
+        flex-direction: column;
+        flex: 0 0 260px;
+        width: 260px;
+        box-sizing: border-box;
+        overflow: hidden;
+        background: var(--barra-fondo);
+        border-right: 1px solid var(--barra-borde);
+        color: var(--texto);
+        font-family: var(--fuente-barra);
+        font-size: 13px;
+      }
+
+      /* Plegada no se encoge con una transicion a proposito: cada fotograma
+         intermedio avisaria al `ResizeObserver` y reajustaria todos los PTY. */
+      #barra.plegada {
+        flex-basis: 24px;
+        width: 24px;
+      }
+
+      #barra.plegada #contenido {
+        display: none;
+      }
+
+      #contenido {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        height: 100%;
+      }
+
+      #cabecera {
+        display: flex;
+        flex: 0 0 32px;
+        align-items: center;
+        justify-content: space-between;
+        height: 32px;
+        padding: 0 8px 0 12px;
+      }
+
+      #titulo {
+        color: var(--texto-tenue);
+      }
+
+      #lista {
+        flex: 1 1 auto;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        list-style: none;
+      }
+
+      /* Alto de fila 32px, y el resto de medidas sale de la escala 4/8/12/16/24. */
+      .fila {
+        position: relative;
+        display: flex;
+        align-items: center;
+        height: 32px;
+      }
+
+      .fila:hover {
+        background: var(--hover-fondo);
+      }
+
+      /* Un proyecto cuya ruta no resuelve no responde: ni hover ni cursor de mano. */
+      .fila.no-disponible:hover {
+        background: transparent;
+      }
+
+      .fila.activa {
+        background: var(--activo-fondo);
+      }
+
+      /* La marca dice cual es el proyecto activo, no donde esta el foco. */
+      .fila.activa::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--activo-marca);
+      }
+
+      /* La ruta completa no ocupa linea: va en el `title` de la fila. Un nombre
+         que no cabe en 260px se corta con puntos suspensivos. */
+      .nombre {
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 32px;
+        padding: 0 8px 0 12px;
+        border: 0;
+        background: transparent;
+        color: var(--texto);
+        font: inherit;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+      }
+
+      .fila.activa .nombre {
+        color: var(--activo-texto);
+      }
+
+      .fila.no-disponible .nombre {
+        color: var(--no-disponible);
+        cursor: default;
+      }
+
+      .icono {
+        flex: 0 0 auto;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--texto-tenue);
+        font: inherit;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .icono:hover {
+        background: var(--hover-fondo);
+        color: var(--texto);
+      }
+
+      /* Con `opacity` y no con `visibility`, que quitaria el boton del recorrido
+         del tabulador. */
+      .quitar {
+        margin-right: 4px;
+        opacity: 0;
+      }
+
+      .fila:hover .quitar,
+      .quitar:focus {
+        opacity: 1;
+      }
+
+      /* El mensaje de error va debajo de la lista, nunca dentro de una fila. */
+      #error {
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 8px 12px;
+        color: var(--error);
+      }
+
+      #error:empty {
+        display: none;
+      }
+
+      /* -------------------------------------------------------------- rejilla */
+
+      #zona {
+        position: relative;
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 100%;
+        background: #0c0c0c;
+      }
+
+      /* Cada proyecto tiene su propia rejilla. Al cambiar de activo la del
+         anterior se oculta con sus paneles VIVOS: sus PTY siguen corriendo.
+         La clase `paneles-N` la pone la rejilla; el CSS es quien la interpreta. */
+      .rejilla {
         display: grid;
         box-sizing: border-box;
         width: 100%;
@@ -26,25 +227,29 @@
         background: #0c0c0c;
       }
 
-      #cuadricula.paneles-1 {
+      .rejilla.oculta {
+        display: none;
+      }
+
+      .rejilla.paneles-1 {
         grid-template-columns: 1fr;
         grid-template-rows: 1fr;
       }
 
-      #cuadricula.paneles-2 {
+      .rejilla.paneles-2 {
         grid-template-columns: 1fr 1fr;
         grid-template-rows: 1fr;
       }
 
-      #cuadricula.paneles-3,
-      #cuadricula.paneles-4 {
+      .rejilla.paneles-3,
+      .rejilla.paneles-4 {
         grid-template-columns: 1fr 1fr;
         grid-template-rows: 1fr 1fr;
       }
 
       /* Con un numero impar el ultimo se estira y ocupa el hueco: no existe la
          celda vacia, asi que no hay que dibujarla ni decidir que hace al pulsarla. */
-      #cuadricula.paneles-3 .celda:last-child {
+      .rejilla.paneles-3 .celda:last-child {
         grid-column: 1 / span 2;
       }
 
@@ -62,12 +267,52 @@
       }
 
       .celda.enfocada {
-        border-color: #3b78ff;
+        border-color: var(--activo-texto);
+      }
+
+      /* Los estados vacios son cinco situaciones distintas y cada una tiene su
+         texto: caer de una en otra en silencio esconde que algo se rompio.
+         `pointer-events: none` para no comerse los clics de la rejilla. */
+      #vacio {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        padding: 24px;
+        pointer-events: none;
+        color: var(--texto-tenue);
+        font-family: var(--fuente-barra);
+        font-size: 13px;
+        text-align: center;
+      }
+
+      #vacio.error {
+        color: var(--error);
+      }
+
+      #vacio[hidden] {
+        display: none;
       }
     </style>
   </head>
   <body>
-    <div id="cuadricula"></div>
+    <div id="app">
+      <aside id="barra">
+        <div id="contenido">
+          <div id="cabecera">
+            <span id="titulo">Proyectos</span>
+            <button id="anadir" class="icono" type="button" title="Anadir un proyecto">+</button>
+          </div>
+          <ul id="lista"></ul>
+          <p id="error"></p>
+        </div>
+      </aside>
+      <main id="zona">
+        <p id="vacio" hidden></p>
+      </main>
+    </div>
     <script type="module" src="panel.js"></script>
   </body>
 </html>

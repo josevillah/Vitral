@@ -217,10 +217,28 @@ intermedias, se escriben igual en los dos lados. Es deliberado: **no se anaden
 argumentos de dos palabras**.
 
 ```js
-await invoke('abrir_panel', { id: '1', filas: 30, columnas: 100 });
+await invoke('abrir_panel', {
+  id: '1',
+  cwd: 'C:\\Programacion\\Proyectos\\Vitral',
+  filas: 30,
+  columnas: 100,
+});
 ```
 
-### Los cuatro comandos son asincronos
+**`cwd` no es opcional y va siempre absoluto.** Omitirlo, o mandarlo relativo, es el
+fallo mudo de esta tanda: el panel abre igual, el prompt aparece igual, y arranca en el
+home del usuario. Nadie lo ve hasta que escribe `pwd`.
+
+Y los de proyecto, que no hablan de paneles:
+
+```js
+const estado = await invoke('leer_estado');
+await invoke('anadir_proyecto', { ruta: 'C:\\Programacion\\Proyectos\\motor' });
+await invoke('quitar_proyecto', { ruta: 'C:\\Programacion\\Proyectos\\motor' });
+await invoke('guardar_preferencias', { activo: null, plegada: true });
+```
+
+### Todos los comandos son asincronos
 
 ```rust
 #[tauri::command(async)]
@@ -237,6 +255,10 @@ Hoy ninguna de esas operaciones bloquea: `wait()`, `write_all`, `resize` y `kill
 sobre un hijo ya muerto retornan en 0.00 s, y soltar el maestro tambien. Esta medido
 tres veces, y las nueve cifras estan en `.vitral/ui/procedencia.md`. La regla es para
 el dia que alguna lo haga. Cuesta una linea por comando.
+
+Vale para los ocho, no solo para los de panel. Los cuatro de proyecto tocan disco
+—leen y escriben `estado.json`, y comprueban directorios— y un disco lento o una unidad
+de red que no responde bloquearian la ventana entera exactamente igual.
 
 El `Mutex` del mapa es el de la biblioteca estandar y **no se sostiene a traves de
 ningun `await`**: los comandos no esperan a nada mientras lo tienen. Si algun dia uno
@@ -483,10 +505,13 @@ Para la ventana `main`, y con exactamente estos permisos:
 | Permiso | Por que |
 |---|---|
 | `core:default` | El conjunto por defecto de Tauri. Se eligio entero y no un permiso suelto porque `listen` necesita al menos `core:event:default` y no hay forma de descubrir que mas hace falta sin arrancar la ventana: un permiso de menos es una ventana rota que hay que depurar a ciegas |
-| `core:window:allow-close` | Cerrar la ventana desde JavaScript, que es lo que hace `Ctrl+Shift+W` cuando solo queda un panel. **No** entra en `core:default`, y sin el la llamada falla con `window.close not allowed` |
+| `core:window:allow-close` | Cerrar la ventana desde JavaScript. **No** entra en `core:default`, y sin el la llamada falla con `window.close not allowed` |
+| `dialog:allow-open` | El selector nativo de carpeta con el que se anade un proyecto. Lo trae `tauri-plugin-dialog`, y es el unico permiso suyo que se pone: no se abre su conjunto `default`, que traeria ademas `allow-message` y `allow-save` |
 
-Los cuatro comandos propios de la aplicacion no necesitan permiso: las capabilities
-gobiernan los comandos de Tauri y de sus plugins, no los que declara uno.
+Los **ocho** comandos propios de la aplicacion no necesitan permiso: las capabilities
+gobiernan los comandos de Tauri y de sus plugins, no los que declara uno. Por eso leer y
+escribir `estado.json` no anade ninguna entrada aqui, y en cambio abrir el selector si:
+ese comando es del plugin, no nuestro.
 
 Si al arrancar sale un error de permiso denegado nombrando un comando, se anade **ese**
 permiso y solo ese. Asi salio `core:window:allow-close`: la cuadricula lo destapo al
@@ -680,13 +705,22 @@ elemento oculto no dispara nada, asi que **el reajuste al mostrar se hace a mano
 
 ```js
 class Panel {
-  constructor(id, celda)   // un terminal y su PTY
+  constructor(id, cwd, celda)  // un terminal y su PTY, arrancado en cwd
 }
 
-const cuadricula = { ... }  // el registro: quien hay, quien manda, como se colocan
+const rejillas = { ... }  // una rejilla por proyecto: quien hay, quien manda, como se colocan
 
-cuadricula.abrir();          // el primer panel, al cargar
+leer_estado();             // al cargar: la lista y el proyecto activo. NINGUN panel
 ```
+
+**Un panel nace sabiendo su `cwd`**, igual que nace sabiendo su `id`, y lo recibe de la
+rejilla a la que pertenece. No lo va a buscar a ningun sitio: no hay ningun sitio donde
+buscarlo, porque no hay proyecto activo global.
+
+**Al cargar no se abre ningun panel.** Se lee el estado, se pinta la lista y, si hay un
+proyecto activo disponible, se muestra su rejilla vacia. El primer panel lo abre la
+persona con `Ctrl+Shift+N`. Esto cambio en la tanda de proyectos: antes se abria uno
+solo al cargar, y ahora abrirlo exigiria adivinar en que proyecto.
 
 `Panel` no sabe que existe la rejilla; la rejilla no sabe que hay dentro de un panel.
 Esa frontera es lo que hara que el modo corrida pueda crear paneles con otro comando
@@ -730,7 +764,8 @@ log y los de la pantalla signifiquen lo mismo durante toda la sesion.
 2. `term.open(celda)` y `fit.fit()`.
 3. Se registra en la cuadricula **antes** de abrir el PTY: si se registrase despues,
    lo primero que escribiera el shell llegaria sin nadie a quien repartirselo.
-4. `invoke('abrir_panel', { id, filas, columnas })`.
+4. `invoke('abrir_panel', { id, cwd, filas, columnas })`, con el `cwd` que le dio su
+   rejilla, absoluto. **Nunca se omite.**
 5. `escribir(datos)`: decodifica el base64 a `Uint8Array` y llama a `term.write(bytes)`.
 6. `morir(codigo)`: marca el panel muerto y escribe la linea de cierre.
 7. `term.onData(...)` se engancha **despues** de que `abrir_panel` haya devuelto, para
@@ -782,10 +817,11 @@ el que entra o sale.
 
 | Accion | Que pasa |
 |---|---|
-| Al cargar la pagina | Se abre un panel y se lleva el foco |
+| Al cargar la pagina | **No se abre ningun panel.** Se pinta la lista y la rejilla del proyecto activo, vacia |
+| `Ctrl+Shift+N` sin proyecto activo | No hace nada. Un panel necesita un `cwd`, y sin proyecto no hay ninguno |
 | `Ctrl+Shift+N` | Abre uno mas, hasta el tope, y el nuevo se lleva el foco |
 | `Ctrl+Shift+W` | Cierra el enfocado. El foco pasa al anterior en orden, o al primero si era el primero |
-| `Ctrl+Shift+W` con un solo panel | **Se cierra la ventana.** Cerrar la ventana ya mata todos los paneles vivos: el camino de salida es el que ya existe y esta probado |
+| `Ctrl+Shift+W` con un solo panel | **La rejilla se queda vacia; la ventana NO se cierra.** Cambio de la tanda de proyectos: ahora la aplicacion existe sin paneles —arranca asi— y cerrar el ultimo terminal no puede llevarse la lista de proyectos por delante |
 | Clic en un panel | Ese panel recibe el foco |
 
 Cerrar un panel es `invoke('cerrar_panel', { id })` y quitar su celda del DOM. Si el
@@ -907,6 +943,7 @@ se rompio. Textos literales, centrados en la zona de la rejilla:
 | La lista esta vacia | `Todavia no has abierto ningun proyecto.` | `texto-tenue` |
 | Hay proyectos pero ninguno activo | `Elige un proyecto de la lista.` | `texto-tenue` |
 | El ultimo activo ya no esta disponible | `El ultimo proyecto abierto ya no esta disponible.` | `error` |
+| Hay proyecto activo pero ningun panel | `Ctrl+Shift+N para abrir un panel.` | `texto-tenue` |
 | El archivo de estado no se pudo leer | `No se pudo leer la lista de proyectos. No se ha borrado nada.` | `error` |
 
 ### Lo que no lleva tratamiento, a proposito
@@ -1080,8 +1117,9 @@ comprobacion manual para que alguien la tache:
    cierra la ventana.
 10. Con dos, tres y cuatro paneles, el texto de cada uno se reajusta al cambiar el
     numero: nada de lineas partidas ni de zonas muertas dentro de una celda.
-11. Al hacer clic en un panel, su borde se pone azul y el teclado va a ese; el cursor
-    solo parpadea en el enfocado.
+11. Al hacer clic en un panel, su borde se pone amarillo `#fde047` y el teclado va a
+    ese; el cursor solo parpadea en el enfocado. Los otros tres bordes siguen en
+    `#2a2a2a`, y el enfocado tiene que distinguirse de un vistazo.
 12. Con cuatro abiertos, Ctrl+Shift+N no hace nada.
 13. Con cuatro paneles escribiendo a la vez (por ejemplo, cuatro `ping -t localhost`),
     la salida de cada uno va a su celda y ninguna se mezcla.
@@ -1108,5 +1146,10 @@ mirar, y es el que justifica la tanda entera:
 23. Meter basura en `estado.json` y arrancar: lista vacia, el mensaje de error, y el
     archivo **sigue con la basura dentro**, sin sobrescribir.
 24. Ctrl+Shift+B pliega y despliega, y los PTY se reajustan en los dos sentidos.
-25. **El borde del panel enfocado es amarillo `#fde047`, no azul.** Cambio a proposito
-    en esta tanda: quien probo la cuadricula va a esperar azul.
+24b. **Al arrancar no hay ningun panel abierto**, y cerrar el ultimo con Ctrl+Shift+W
+    deja la rejilla vacia sin cerrar la ventana. Los dos cambiaron en esta tanda
+    respecto a lo que probaste en la cuadricula.
+25. **Aviso para quien probo la cuadricula: el punto 11 cambio.** El borde de foco era
+    `#3b78ff` y ahora es `#fde047`. No es un fallo de la implementacion; se cambio a
+    proposito en esta tanda, porque el azul se separaba de los bordes vecinos por
+    3.6:1 y el amarillo lo hace por 10.9:1.

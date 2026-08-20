@@ -556,6 +556,39 @@ produce `12s`, el agente escribe codigo que produce `0m 12s`, y hace bien, porqu
 el plomo manda. En cuanto la funcion exista, el ejemplo se regenera llamandola y
 se pega la salida literal.
 
+**Al cambiar un valor o una firma contratada, se barre el archivo entero con `grep`
+antes de dar la fase por cerrada.** Con `grep`, no releyendo, y no fiandose de recordar
+donde estaba. Cambiar la tabla es la parte facil y la que se hace sola; las
+consecuencias viven repartidas en ejemplos, en listas de comprobacion y en prosa, y esas
+son justo las que nadie mira.
+
+Salio de la tanda de proyectos, y del peor modo posible: **dos veces seguidas en la
+misma sesion.**
+
+La primera, el borde de foco paso de `#3b78ff` a `#fde047` en la tabla "Como se ve", y
+el punto 11 de la lista de comprobacion manual siguio diciendo *"su borde se pone
+azul"*, **contradiciendo al punto 25 del mismo archivo**, que anunciaba el cambio.
+
+La segunda es peor. `abrir_panel` gano el argumento `cwd` en la tabla del catalogo IPC,
+y los dos ejemplos de codigo siguieron sin el. **El agente copia el ejemplo antes que la
+tabla**, asi que el resultado habria sido un panel arrancando en el directorio del
+usuario en vez del proyecto, sin error y sin aviso: exactamente el fallo mudo que esa
+tanda existia para evitar.
+
+Las dos las encontro la persona leyendo el contrato, no el planificador. Y al barrer de
+verdad, `grep abrir_panel` devolvio **ocho menciones**, de las que **tres no eran del
+`cwd` sino de un cambio anterior que tampoco se habia barrido**: el arranque sin paneles,
+que habia dejado un `cuadricula.abrir()` y dos filas de tabla diciendo lo contrario de
+lo acordado. Un barrido no barrido se acumula, y el segundo cambio lo hereda.
+
+La regla practica, sin atajo:
+
+1. Cambiado el valor o la firma, `grep` del nombre **viejo** y del **nuevo**.
+2. Mirar cada linea que salga: tabla, ejemplo, prosa, lista de comprobacion, prompt del
+   boceto. El boceto tambien, que es donde se le dice al agente que secciones leer.
+3. Si el valor viejo tiene que seguir apareciendo —para avisar de que cambio—, que se
+   lea como aviso y nunca como afirmacion.
+
 **Las rutas se declaran por archivo exacto, no por carpeta.** `src/registro.mjs`,
 no `src/`. La comparacion de solapamiento es por segmento de ruta, asi que
 `src/registro.mjs` y `src/salida.mjs` conviven sin problema, pero `src/` choca con
@@ -838,6 +871,7 @@ gastar menos, y no son intercambiables. Es otra tanda, y su plomo empieza aqui.
 | Un handoff viejo de un id que se repite entre tandas | Nadie lo detecta. `--solo` se salta las dependencias que tienen handoff en disco sin mirar de que tanda son, e inyecta el contenido viejo en el prompt del dependiente |
 | El mismo dato explicado en dos prompts | Nadie lo detecta. Buscar el dato repetido: si esta en dos prompts, es plomo |
 | Un ejemplo del plomo escrito a mano | Nadie lo detecta. Generarlo llamando al codigo real y pegar la salida |
+| Una tabla cambiada y sus ejemplos sin barrer | Nadie lo detecta, y es el peor sitio donde puede pasar: el agente copia el ejemplo antes que la tabla. `grep` del nombre viejo y del nuevo antes de cerrar la fase |
 | Un catalogo sin origen unico | Nadie lo detecta. Preguntarlo en la entrevista |
 | Correr en `main` | `--seco` avisa; la corrida real aborta antes de lanzar nada |
 
