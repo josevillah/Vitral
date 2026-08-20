@@ -90,6 +90,8 @@ nadie lo note.
 | `portable-pty` | 0.9.0 | la de wezterm. Es quien habla ConPTY |
 | `base64` | 0.23.1 | para los bytes del PTY |
 | `serde` | 1, feature `derive` | las cargas de los eventos necesitan `Serialize` |
+| `serde_json` | 1 | entro con la tanda de proyectos, para leer y escribir `estado.json` |
+| `windows-sys` | 0.61.2 | con cuatro features: `Win32_Foundation`, `Win32_System_Diagnostics_ToolHelp`, `Win32_System_SystemInformation`, `Win32_System_Threading`. Es el snapshot de procesos y los dos contadores de maquina |
 | `@xterm/xterm` | 6.0.0 | vendorizado, no por npm |
 | `@xterm/addon-fit` | 0.11.0 | vendorizado, no por npm |
 
@@ -730,7 +732,7 @@ Pasa de `32px` a **`44px`** y lleva dos lineas. De izquierda a derecha:
 |---|---|
 | `0-3px` | La marca `activo-marca`, solo en la fila activa |
 | `16-38px` | El icono: cuadro de `22x22` |
-| resto | Linea 1: el nombre. Linea 2: la **ruta completa** en `texto-tenue` a `11px` |
+| resto | Linea 1: el nombre. Linea 2: la **ruta completa** a `11px`, en `texto-tenue` en las filas normales y en `activo-ruta` en la activa |
 | derecha | El indicador de actividad, y a su derecha el contador de paneles |
 
 **La ruta completa deja de vivir en el `title`** y se ve siempre. Si no cabe, se corta
@@ -835,24 +837,50 @@ no cambia ni una letra y el frontend ni se entera.
 
 ### La medicion, que es una puerta
 
-**Antes de escribir la mitad 1 hay que medir cuanto cuesta un snapshot de procesos del
-sistema, y la funcion depende del resultado.**
+**Esta puerta ya se paso, y no hay que volver a medirla.** Se deja escrita entera
+porque el resultado es lo que autoriza la mitad 1, no porque quede nada por decidir.
 
-Medido ya, y por eso no se hace asi: preguntar por los hijos de **un** PID via WMI son
-**48 ms**. Con cuatro paneles, 190 ms por muestra — a 1 Hz eso es un 19% de un nucleo
-solo para esto, e inaceptable. La via correcta es **un unico snapshot del sistema** que
-da todos los padres de una pasada y sirve para los cuatro paneles a la vez.
+| | |
+|---|---|
+| Umbral que se fijo | `20 ms` por snapshot — a 1 Hz, un 2% de un nucleo |
+| **Medido** | **`8,1 ms` de media, `9,4 ms` el peor**, con 256 procesos |
+| Resultado | **Entran las dos mitades** |
 
-**El umbral es `20ms` por snapshot.** A 1 Hz eso es un 2% de un nucleo, que es lo que se
-esta dispuesto a pagar.
+Queda margen de mas del doble sobre el umbral, asi que **no se vuelve a medir esto** a
+menos que cambie la forma de tomar el snapshot. Si alguien se encuentra midiendolo otra
+vez, es que este parrafo no estaba.
 
-- Si el snapshot cuesta **20 ms o menos**: entran las dos mitades.
-- Si cuesta **mas de 20 ms**: **se cae la mitad 1** y la senal pasa a ser solo la
-  escritura reciente. Se dice en el handoff con la cifra medida, y este archivo se
-  corrige para que el proximo no lo intente otra vez.
+Y la via que **no** se toma, tambien medida: preguntar por los hijos de **un** PID via
+WMI son `48 ms`. Con cuatro paneles, 190 ms por muestra — a 1 Hz, un 19% de un nucleo.
+Lo que cuesta 8 ms es **un unico snapshot del sistema** que da todos los padres de una
+pasada y sirve para los cuatro paneles a la vez. La diferencia entre las dos cifras no
+es el volumen de datos: es preguntar una vez contra preguntar cuatro.
 
-No se busca un rodeo, no se muestrea mas despacio para colarlo, y no se mete igual "a
-ver que tal". La cifra manda.
+### El filtro del host de consola no llega a dispararse
+
+La regla dice ignorar `conhost.exe` entre los hijos. **Comprobado en un panel real:
+dentro de ConPTY el `conhost.exe` cuelga del proceso de la aplicacion, no del shell del
+panel**, asi que nunca aparece como hijo y el filtro no se activa nunca.
+
+**Se deja puesto igual**, y a proposito: cuesta una comparacion de cadena por proceso y
+protege de que una version futura de ConPTY vuelva a colgarlo del shell. Un filtro que
+no se dispara no molesta a nadie; su ausencia el dia que cambie el arbol seria un panel
+que parece ocupado siempre.
+
+### La limitacion que se acepta: Windows recicla PIDs
+
+La mitad 1 empareja procesos por el PID de su padre, y **Windows reutiliza los PIDs**.
+Un proceso ajeno cuyo padre muerto tuviera el PID de un panel se contaria como hijo de
+ese panel, y el indicador se encenderia sin que el panel este haciendo nada.
+
+**Descartarlo exigiria abrir un manejador por proceso** para comparar tiempos de
+arranque, y ese es exactamente el coste que la puerta de arriba prohibe: dejaria de ser
+un snapshot barato.
+
+Se acepta, y la semantica es lo que lo hace aceptable: la senal dice **"ejecutando
+algo"**, no "trabajando". Un falso positivo raro y transitorio en una senal que ya es
+aproximada no es un fallo, es su precision. **No se arregla**, y quien lo vea en la
+ventana que sepa que esta escrito aqui.
 
 ---
 
@@ -885,8 +913,22 @@ no existir. Aqui no se repite.
 corre vas a estar en otra ventana, y pausar justo entonces vacia de sentido la funcion.
 Solo se pausa con la ventana **minimizada**, que es cuando no hay nada que pintar.
 
-Medido en esta maquina: `\Processor(_Total)\% Processor Time` mas
-`\Memory\Available MBytes` cuestan **1 ms** por muestra. A 1 Hz, un `0,1%` de un nucleo.
+**No se usan contadores de rendimiento.** Se usan dos llamadas directas de Windows:
+
+| Que | Como | Coste |
+|---|---|---|
+| CPU | `GetSystemTimes`, restando dos lecturas seguidas | `0,01 ms` |
+| Memoria | `GlobalMemoryStatusEx` | `0,01 ms` |
+
+La razon del cambio, que vale la pena escribir porque el camino obvio era el otro: los
+contadores PDH equivalentes —`\Processor(_Total)\% Processor Time` y
+`\Memory\Available MBytes`— cuestan **1 ms**, cien veces mas, y devuelven megabytes que
+hay que reconvertir. Estas dos entregan **bytes directamente** y no arrastran el
+subsistema de contadores. A 1 Hz el coste deja de ser medible.
+
+`GetSystemTimes` da tiempos acumulados, no un porcentaje: **el porcentaje sale de restar
+dos lecturas consecutivas**, asi que la primera muestra despues de arrancar —o despues
+de restaurar la ventana— no tiene con que compararse y no se emite.
 
 ### La GPU no entra, y aqui esta la cifra
 
@@ -1113,6 +1155,12 @@ tokens van agrupados por superficie y **no se cruzan**.
 | `activo-fondo` | `#231e12` | fondo de la fila activa, **oscuro dentro de la barra clara** |
 | `activo-texto` | `#fde047` | nombre del proyecto activo |
 | `activo-marca` | `#bef264` | barra vertical en el borde izquierdo de la fila activa |
+| `activo-ruta` | `#8d7f4a` | la ruta, en la segunda linea de la fila activa |
+
+**`activo-ruta` existe porque `texto-tenue` no vale ahi.** `texto-tenue` esta afinado
+para la barra clara y sobre `activo-fondo` da `1.35 : 1`: invisible. `#8d7f4a` da `4.08`.
+Es el mismo caso que `texto-tenue` contra `error-barra` en la rejilla, y la misma regla:
+**un token de una superficie no se usa en otra.**
 
 **Esta fila es oscura a proposito, y el motivo no es de contraste.** Esta a `1.18 : 1` de
 la rejilla: es practicamente el mismo material. El proyecto activo no queda *resaltado*,
@@ -1180,7 +1228,7 @@ version se eligio mirando una maqueta. Ningun valor de aqui vuelve a fijarse sin
 | Ancho desplegada | `260px` |
 | Ancho plegada | `24px` |
 | Divisor con la rejilla | `1px` solido, `barra-borde` |
-| Alto de una fila | `32px` |
+| Alto de una fila | `44px`, en dos lineas. La reparte "La barra densa" |
 | Marca del proyecto activo | `3px` de ancho, alto completo de la fila |
 | Escala de espaciado | `4 / 8 / 12 / 16 / 24`, y **nada fuera de ella** |
 | Tipografia | `'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif` |
@@ -1192,9 +1240,9 @@ tabla de arriba. Y **el divisor se queda** aunque con `15.27` de separacion ya n
 falta para separar: da un canto limpio donde la superficie clara toca la oscura, y sin el
 el borde parece un corte.
 
-La ruta completa **no ocupa linea**: va como atributo `title` de la fila, que el sistema
-muestra al detenerse encima. Un nombre que no cabe en `260px` se corta con puntos
-suspensivos.
+**La ruta completa ya no vive en el `title`**: ocupa la segunda linea de la fila y se ve
+siempre. Lo reparte "La barra densa", mas arriba. Un nombre que no cabe en `260px` se
+corta con puntos suspensivos por la derecha; la ruta, **por la izquierda**.
 
 ### Los estados de una fila
 
@@ -1235,8 +1283,10 @@ El boton va **debajo del texto**, separado `16px`, centrado con el.
 - **Ningun panel lleva etiqueta ni titulo**, y sigue siendo cierto con proyectos: la
   rejilla entera es del proyecto activo, que ya esta dicho en la barra. La etiqueta se
   guarda para el modo corrida, que es cuando un panel tendra algo propio que decir.
-- **No hay icono por proyecto.** Ni de carpeta, ni de lenguaje, ni derivado del
-  contenido: deducirlo obligaria a mirar dentro del proyecto, que es lo que no se hace.
+- **El icono no se deduce del contenido del proyecto.** Hay icono —la inicial, que sale
+  del nombre— pero ni de carpeta, ni de lenguaje, ni de framework, ni de tipo de
+  repositorio: deducir cualquiera de esos obliga a mirar dentro, que es lo que no se
+  hace. Lo que existe esta en "El icono"; lo prohibido sigue prohibido.
 - **El indicador de actividad no tiene estado apagado.** Cuando un proyecto no ejecuta
   nada, el indicador **no esta**: no se queda en gris ocupando sitio. La mitad del
   trabajo de ese indicador es que un proyecto parado se vea parado.
@@ -1321,7 +1371,8 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 | Se cierra la ventana con procesos vivos | Se matan todos. No queda ningun `powershell.exe` huerfano |
 | Se cierra la ventana con el panel ya muerto | El vigia ya borro la entrada; no hay nada que matar y no es un error |
 | Un proyecto sin paneles vivos | Sin contador y sin indicador. La fila lleva icono, nombre y ruta y nada mas |
-| El snapshot de procesos cuesta mas de 20 ms | Se cae la mitad 1 de la senal. `paneles:ocupados` sigue emitiendose, calculado solo con la escritura reciente |
+| Un proceso ajeno hereda el PID de un panel muerto | Falso positivo: el indicador se enciende sin motivo. **Se acepta**, y la seccion de la senal dice por que |
+| La primera muestra de CPU tras arrancar o restaurar | No se emite: `GetSystemTimes` necesita dos lecturas para dar un porcentaje |
 | Un panel muere mientras estaba ejecutando algo | El latido siguiente ya no lo trae en `ids` y el indicador desaparece. No hace falta ningun aviso aparte |
 | La ventana se minimiza | Se deja de muestrear y de emitir los dos eventos. Al restaurar se reanuda; el primer valor de CPU puede ser el de un intervalo largo |
 | Los contadores de rendimiento no se pueden abrir | `maquina:uso` no se emite y la franja muestra guiones en vez de cifras. No es un error que aborte nada |
