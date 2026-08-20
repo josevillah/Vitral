@@ -5,25 +5,52 @@
     <title>Vitral</title>
     <link rel="stylesheet" href="vendor/xterm.css" />
     <style>
-      /* Paleta Vidriera. Un vitral es vidrio de color separado por plomo: el fondo
-         oscuro es el plomo, y el color solo aparece en lo que esta vivo.
+      /* Paleta Pergamino. Un vitral es vidrio de color separado por plomo, y aqui
+         el plomo es la barra: clara, opaca, y con un hueco oscuro por donde se ve
+         el proyecto abierto.
 
-         Los dos amarillos y el lima significan cosas distintas y no se
-         intercambian: `activo-texto` es "lo que esta activo ahora" -el nombre del
-         proyecto activo y el borde del panel enfocado, el mismo amarillo a
-         proposito- y `activo-marca` marca cual es el proyecto activo, no donde
-         esta el foco, asi que solo aparece en la barra y nunca en la rejilla. */
+         LA VENTANA TIENE TRES SUPERFICIES Y LA POLARIDAD CAMBIA ENTRE ELLAS, asi
+         que los tokens van agrupados por superficie y NO SE CRUZAN. Un color
+         pensado para la barra clara no se lee sobre la rejilla oscura, y al reves;
+         no falla nada, no avisa nada, simplemente no se lee.
+
+         El caso concreto, que es el que se comete solo porque los nombres se
+         parecen: `texto-tenue` y `error-barra` son de la barra y solo de la barra.
+         Sobre la rejilla dan 3.07 y 2.49, por debajo del minimo de 4.5. Los
+         estados vacios viven en la rejilla y usan `vacio-texto` y `error-rejilla`,
+         que son tokens distintos. La version anterior de esto tenia un solo
+         `--error` para los dos sitios, y por eso se partio en dos. */
       :root {
-        --barra-fondo: #0e0e0a;
-        --barra-borde: #262218;
-        --texto: #d0cbbd;
-        --texto-tenue: #847c69;
-        --hover-fondo: #17140c;
-        --activo-fondo: #201a0c;
-        --activo-marca: #bef264;
+        /* --------- superficie 1 · la barra, #ece3c8 --------- */
+        --barra-fondo: #ece3c8;
+        --barra-borde: #c8bc98;
+        --texto: #2e2b1c;
+        --texto-tenue: #665f4a;
+        --hover-fondo: #e2d8b8;
+        --no-disponible: #a39c84;
+        --error-barra: #a01c1c;
+
+        /* --------- superficie 2 · la fila del proyecto activo, #231e12 ---------
+
+           Es oscura a proposito, y el motivo no es de contraste: esta a 1.18 : 1
+           de la rejilla, es practicamente el mismo material. El proyecto activo no
+           queda resaltado, queda ABIERTO: su fila es un trozo del mismo negro que
+           hay al otro lado, como si la barra tuviera un hueco.
+
+           Y tiene la consecuencia practica que es la razon de que se eligiera: los
+           dos acentos se quedan exactamente como estaban contratados. Sobre
+           pergamino `#fde047` da 1.03 y seria invisible; sobre esta fila da 12.58.
+           Aclarar esta fila rompe las dos cosas a la vez. */
+        --activo-fondo: #231e12;
         --activo-texto: #fde047;
-        --no-disponible: #5a5347;
-        --error: #ef4444;
+        --activo-marca: #bef264;
+
+        /* --------- superficie 3 · la rejilla, #0c0c0c --------- */
+        --vacio-texto: #847c69;
+        --error-rejilla: #ef4444;
+        --boton-fondo: #241f13;
+        --boton-borde: #4a4128;
+        --boton-texto: #e0dac9;
 
         --fuente-barra: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
       }
@@ -48,6 +75,9 @@
 
       /* ---------------------------------------------------------------- barra */
 
+      /* El divisor se queda aunque con 15.27 de separacion ya no haga falta para
+         separar: da un canto limpio donde la superficie clara toca la oscura, y sin
+         el el borde parece un corte. */
       #barra {
         display: flex;
         flex-direction: column;
@@ -86,11 +116,14 @@
         align-items: center;
         justify-content: space-between;
         height: 32px;
-        padding: 0 8px 0 12px;
+        padding: 0 8px 0 16px;
       }
 
       #titulo {
         color: var(--texto-tenue);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
 
       #lista {
@@ -119,11 +152,16 @@
         background: transparent;
       }
 
-      .fila.activa {
+      /* El hueco por el que se ve el proyecto. Va DESPUES de `.fila:hover` y de
+         `.fila.no-disponible:hover`, que tienen su misma especificidad: asi el
+         activo gana y pasar el raton por encima no lo aclara. */
+      .fila.activa,
+      .fila.activa:hover {
         background: var(--activo-fondo);
       }
 
-      /* La marca dice cual es el proyecto activo, no donde esta el foco. */
+      /* La marca dice cual es el proyecto activo, no donde esta el foco: por eso
+         solo aparece aqui y nunca en la rejilla. */
       .fila.activa::before {
         content: '';
         position: absolute;
@@ -140,7 +178,7 @@
         flex: 1 1 auto;
         min-width: 0;
         height: 32px;
-        padding: 0 8px 0 12px;
+        padding: 0 8px 0 16px;
         border: 0;
         background: transparent;
         color: var(--texto);
@@ -152,10 +190,15 @@
         cursor: pointer;
       }
 
+      /* El mismo amarillo que el borde del panel enfocado, a proposito: `#fde047`
+         es "lo que esta activo ahora", en los dos niveles. Si alguna vez hace falta
+         oscurecer uno de los dos para que se lea, el que esta mal es el fondo. */
       .fila.activa .nombre {
         color: var(--activo-texto);
       }
 
+      /* 2.14 : 1 a proposito: es el estado deshabilitado y tiene que verse
+         apagado, no invisible. */
       .fila.no-disponible .nombre {
         color: var(--no-disponible);
         cursor: default;
@@ -181,6 +224,20 @@
         color: var(--texto);
       }
 
+      /* La `x` de quitar, cuando su fila es la activa, cae sobre la superficie 2 y
+         no sobre la barra: `texto-tenue` ahi daria 1.35 y no se veria. Se le da el
+         unico color de texto que esa superficie tiene contratado, y se le quita el
+         fondo de hover, que es un token de la barra clara y encenderia un cuadro
+         claro dentro del hueco oscuro. */
+      .fila.activa .icono {
+        color: var(--activo-texto);
+      }
+
+      .fila.activa .icono:hover {
+        background: transparent;
+        color: var(--activo-texto);
+      }
+
       /* Con `opacity` y no con `visibility`, que quitaria el boton del recorrido
          del tabulador. */
       .quitar {
@@ -193,12 +250,13 @@
         opacity: 1;
       }
 
-      /* El mensaje de error va debajo de la lista, nunca dentro de una fila. */
+      /* El mensaje de error va debajo de la lista, nunca dentro de una fila. Y en
+         `error-barra`, que es de la barra: sobre la rejilla daria 2.49. */
       #error {
         flex: 0 0 auto;
         margin: 0;
-        padding: 8px 12px;
-        color: var(--error);
+        padding: 8px 16px;
+        color: var(--error-barra);
       }
 
       #error:empty {
@@ -266,33 +324,66 @@
         background: #0c0c0c;
       }
 
+      /* El mismo `#fde047` que el nombre del proyecto activo: no hay dos amarillos. */
       .celda.enfocada {
         border-color: var(--activo-texto);
       }
 
       /* Los estados vacios son cinco situaciones distintas y cada una tiene su
          texto: caer de una en otra en silencio esconde que algo se rompio.
-         `pointer-events: none` para no comerse los clics de la rejilla. */
+         Viven sobre la rejilla, asi que llevan los tokens de la superficie 3 y
+         NINGUNO de la barra. `pointer-events: none` para no comerse los clics de
+         la rejilla; el boton lo recupera para si. */
       #vacio {
         position: absolute;
         inset: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
         box-sizing: border-box;
+        gap: 16px;
         padding: 24px;
         pointer-events: none;
-        color: var(--texto-tenue);
         font-family: var(--fuente-barra);
-        font-size: 13px;
         text-align: center;
       }
 
-      #vacio.error {
-        color: var(--error);
+      #vacio[hidden] {
+        display: none;
       }
 
-      #vacio[hidden] {
+      #vacio-texto {
+        margin: 0;
+        color: var(--vacio-texto);
+        font-size: 14px;
+      }
+
+      #vacio-texto.error {
+        color: var(--error-rejilla);
+      }
+
+      /* NEUTRO, y no es un descuido: la paleta no tiene color de accion porque los
+         dos acentos ya significan otra cosa. Un boton amarillo diria que el boton
+         esta activo, que es falso.
+
+         Sin estado hover propio declarado, tambien a proposito: es el unico control
+         de la aplicacion y no compite con nada. Si al probarlo se ve muerto, se
+         anade entonces y se escribe antes en el contrato. */
+      #vacio-boton {
+        padding: 12px 24px;
+        border: 1px solid var(--boton-borde);
+        border-radius: 4px;
+        background: var(--boton-fondo);
+        color: var(--boton-texto);
+        font-family: var(--fuente-barra);
+        font-size: 15px;
+        line-height: 1;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+
+      #vacio-boton[hidden] {
         display: none;
       }
     </style>
@@ -310,7 +401,13 @@
         </div>
       </aside>
       <main id="zona">
-        <p id="vacio" hidden></p>
+        <!-- El boton va debajo del texto y separado 16px, y solo aparece en tres de
+             los cinco estados vacios: quien decide cual es `pintarVacio`, en
+             panel.js, que es tambien quien sabe que hace al pulsarlo. -->
+        <div id="vacio" hidden>
+          <p id="vacio-texto"></p>
+          <button id="vacio-boton" type="button" hidden></button>
+        </div>
       </main>
     </div>
     <script type="module" src="panel.js"></script>

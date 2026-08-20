@@ -34,6 +34,13 @@ const VACIO_NO_DISPONIBLE = 'El ultimo proyecto abierto ya no esta disponible.';
 const VACIO_SIN_PANELES = 'Ctrl+Shift+N para abrir un panel.';
 const VACIO_ILEGIBLE = 'No se pudo leer la lista de proyectos. No se ha borrado nada.';
 
+// Los dos rotulos del boton del estado vacio, tambien literales. El boton sale en
+// tres de las cinco pantallas y en las otras dos NO, a proposito: en esas la accion
+// que toca esta en la lista, que ya se ve al lado, y un boton ahi competiria con
+// ella. El reparto lo decide `textoVacio`.
+const BOTON_PROYECTO = 'Abrir un proyecto…';
+const BOTON_PANEL = 'Abrir un panel';
+
 /// El PTY manda bytes en base64 justo para que un caracter UTF-8 partido entre dos
 /// lecturas no se pierda: quien lo junta es xterm, que recibe bytes y no texto.
 function bytesDesdeBase64(texto) {
@@ -411,6 +418,8 @@ const barra = document.getElementById('barra');
 const lista = document.getElementById('lista');
 const error = document.getElementById('error');
 const vacio = document.getElementById('vacio');
+const vacioTexto = document.getElementById('vacio-texto');
+const vacioBoton = document.getElementById('vacio-boton');
 
 /// El ultimo `Estado` que devolvio Rust, tal cual llego. Los tres comandos que lo
 /// devuelven mandan el estado ENTERO recalculado, asi que aqui no se mantiene una
@@ -499,24 +508,47 @@ function pintarLista() {
 /// Cual de los cinco estados vacios toca, o `null` si hay paneles que mostrar.
 /// El orden importa: el del archivo ilegible va primero, porque con la lista
 /// vacia los dos casos se verian igual y uno de ellos es un fallo.
+///
+/// `boton` es el rotulo, o `null` si esa pantalla no lleva boton, y `accion` es lo
+/// que hace al pulsarlo. Los dos sin boton -"ninguno activo" y "no disponible"- lo
+/// estan a proposito: ahi la accion que toca esta en la lista, que ya se ve al lado.
+///
+/// `error: true` NO pinta con `error-barra`, que es un token de la barra clara y
+/// sobre la rejilla da 2.49: pinta con `error-rejilla`. La clase la interpreta el
+/// CSS, y son dos tokens distintos justo por esto.
 function textoVacio() {
-  if (app.ilegible) return { texto: VACIO_ILEGIBLE, error: true };
-  if (app.estado.proyectos.length === 0) return { texto: VACIO_SIN_PROYECTOS, error: false };
+  if (app.ilegible) {
+    return { texto: VACIO_ILEGIBLE, error: true, boton: BOTON_PROYECTO, accion: 'proyecto' };
+  }
+  if (app.estado.proyectos.length === 0) {
+    return { texto: VACIO_SIN_PROYECTOS, error: false, boton: BOTON_PROYECTO, accion: 'proyecto' };
+  }
 
   const activo = proyectoActivo();
-  if (activo === null) return { texto: VACIO_SIN_ACTIVO, error: false };
-  if (!activo.disponible) return { texto: VACIO_NO_DISPONIBLE, error: true };
+  if (activo === null) return { texto: VACIO_SIN_ACTIVO, error: false, boton: null, accion: null };
+  if (!activo.disponible) {
+    return { texto: VACIO_NO_DISPONIBLE, error: true, boton: null, accion: null };
+  }
 
   const rejilla = rejillas.porProyecto.get(activo.ruta);
-  if (!rejilla || rejilla.orden.length === 0) return { texto: VACIO_SIN_PANELES, error: false };
+  if (!rejilla || rejilla.orden.length === 0) {
+    return { texto: VACIO_SIN_PANELES, error: false, boton: BOTON_PANEL, accion: 'panel' };
+  }
   return null;
 }
 
 function pintarVacio() {
   const cual = textoVacio();
   vacio.hidden = cual === null;
-  vacio.textContent = cual === null ? '' : cual.texto;
-  vacio.classList.toggle('error', cual !== null && cual.error);
+  vacioTexto.textContent = cual === null ? '' : cual.texto;
+  vacioTexto.classList.toggle('error', cual !== null && cual.error);
+
+  const rotulo = cual === null ? null : cual.boton;
+  vacioBoton.hidden = rotulo === null;
+  vacioBoton.textContent = rotulo === null ? '' : rotulo;
+  // Que hace al pulsarlo viaja en el propio boton: asi el escuchador se engancha
+  // una sola vez al arrancar y no uno por repintado.
+  vacioBoton.dataset.accion = cual === null || cual.accion === null ? '' : cual.accion;
 }
 
 // ------------------------------------------------------------------- acciones
@@ -656,6 +688,17 @@ window.addEventListener('keydown', (evento) => {
 });
 
 document.getElementById('anadir').addEventListener('click', () => anadir());
+
+// El boton grande del estado vacio. Un solo escuchador para las tres pantallas que
+// lo llevan: lo que hace lo dice `data-accion`, que pone `pintarVacio` al repintar.
+// No hace nada propio, llama a lo que ya existe: el mismo `anadir` del `+` de la
+// barra y el mismo `rejillas.abrir` de Ctrl+Shift+N. Con cuatro paneles abiertos
+// esta pantalla no se ve, asi que el tope se sigue respetando solo.
+vacioBoton.addEventListener('click', () => {
+  const accion = vacioBoton.dataset.accion;
+  if (accion === 'proyecto') anadir();
+  else if (accion === 'panel') rejillas.abrir();
+});
 
 // ------------------------------------------------------------------- arranque
 
