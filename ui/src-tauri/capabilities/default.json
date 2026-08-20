@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "permisos de la ventana principal, que hoy solo contiene el panel",
-  "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-close", "dialog:allow-open"]
+  "description": "permisos de la ventana principal: la barra lateral y la rejilla de paneles",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open"
+  ]
 }

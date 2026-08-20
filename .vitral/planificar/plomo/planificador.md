@@ -589,6 +589,15 @@ La regla practica, sin atajo:
 3. Si el valor viejo tiene que seguir apareciendo —para avisar de que cambio—, que se
    lea como aviso y nunca como afirmacion.
 
+**Un archivo que una herramienta reescribe sola va en las `rutas` de quien la
+provoca.** No lo escribe el agente, lo escribe su herramienta, pero acaba modificado
+igual y el motor lo marca como trabajo fuera de lo declarado. `Cargo.lock` es el caso
+vivo: la tanda de proyectos anadio una dependencia, cargo reescribio el lock al
+resolverla, y salio senalado. Vale para todos sus hermanos —`package-lock.json`,
+`go.sum`, `poetry.lock`— y para cualquier cosa que un formateador o un generador toque
+de paso. La pregunta al cerrar el boceto es: *¿que va a reescribir esta tarea sin
+teclearlo?*
+
 **Las rutas se declaran por archivo exacto, no por carpeta.** `src/registro.mjs`,
 no `src/`. La comparacion de solapamiento es por segmento de ruta, asi que
 `src/registro.mjs` y `src/salida.mjs` conviven sin problema, pero `src/` choca con
@@ -853,6 +862,7 @@ gastar menos, y no son intercambiables. Es otra tanda, y su plomo empieza aqui.
 
 | Error | Como se detecta a tiempo |
 |---|---|
+| Un archivo que reescribe una herramienta y no esta en las rutas | El resumen de la corrida lo marca como fuera de lo declarado, pero solo despues de gastar. Antes de cerrar: ¿que reescribe esta tarea sin teclearlo? |
 | Declarar rutas por carpeta (`src/`) | `--seco` aborta si dos de la misma ola se solapan. Si caen en olas distintas no aborta: hay que verlo leyendo las rutas |
 | Dos tareas escribiendo el mismo archivo | `--seco` aborta, siempre que esten en la misma ola |
 | Un ciclo de dependencias | `--seco` aborta y nombra los ids del ciclo |
