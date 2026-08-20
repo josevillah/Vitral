@@ -103,9 +103,10 @@ Se fijan aqui porque los checks van a compararlos. Siguen el estilo de los que y
 hay en `boceto.mjs`: mensaje corto que nombra la tarea y el campo, y sugerencia
 que dice como arreglarlo.
 
-**Aviso sobre estos ejemplos:** estan escritos a mano porque las funciones todavia
-no existen. En cuanto existan hay que regenerarlos llamando al codigo y
-sustituirlos aqui, como manda `motor.md`. Mientras tanto, mandan estos.
+**Los cinco son salida literal**, capturada provocando cada error con `--seco` en
+un repositorio de prueba. Se muestra la linea impresa entera: el `vitral: ` y la
+sangria de ocho espacios los pone `imprimirError`, no el mensaje. Lo que se le
+pasa a `ErrorVitral` o a `aborta` es el texto **sin** el prefijo.
 
 ### En `boceto.mjs`, con `ErrorVitral`
 
@@ -113,17 +114,17 @@ El valor invalido se muestra con `JSON.stringify`, como ya hace el mensaje de
 `timeout`.
 
 ```
-la tarea "backend" tiene un "presupuesto" invalido: 0.
+vitral: la tarea "backend" tiene un "presupuesto" invalido: 0.
         debe ser un numero de dolares mayor que cero; omite el campo para correr sin tope
 ```
 
 ```
-la tarea "backend" tiene un "modelo" invalido: 123.
+vitral: la tarea "backend" tiene un "modelo" invalido: 123.
         debe ser una cadena sin espacios; omite el campo para usar el modelo por defecto
 ```
 
 ```
-la tarea "backend" tiene un "cwd" invalido: "C:/otro".
+vitral: la tarea "backend" tiene un "cwd" invalido: "C:/otro".
         debe ser una ruta relativa no vacia, como "sub/modulo"
 ```
 
