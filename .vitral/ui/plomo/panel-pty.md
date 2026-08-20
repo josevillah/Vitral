@@ -10,6 +10,13 @@ con `--boceto .vitral/ui/boceto.json`. `.vitral/plomo/motor.md` **no** entra en 
 prompts: son 20 KB de contrato sobre modulos de Node que la interfaz no toca. Lo poco
 que hay que saber del motor esta abajo, en tres frases.
 
+**Lo que no esta aqui:** como se verifico cada cosa —el experimento de ConPTY con sus
+nueve medidas, la procedencia de cada simbolo y la cadena del inspector— vive en
+`.vitral/ui/procedencia.md`, fuera de `plomo/` y por tanto fuera de estos prompts.
+Sigue versionado y sin tocar una letra. Aqui se queda lo que hay que cumplir; alli,
+como se supo. Cuando una regla de este archivo parezca prescindible, la respuesta
+esta en ese archivo antes que en releer esta.
+
 ---
 
 ## Que es esto
@@ -199,8 +206,10 @@ defined with `#[tauri::command(async)]`"*. Un comando sincrono que bloquee —un
 escritura a una tuberia llena, un `resize` que no vuelve, un mutex retenido— congela la
 ventana entera, no solo el panel.
 
-Hoy ninguna de esas operaciones bloquea; esta medido y esta abajo. La regla es para el
-dia que alguna lo haga. Cuesta una linea por comando.
+Hoy ninguna de esas operaciones bloquea: `wait()`, `write_all`, `resize` y `kill`
+sobre un hijo ya muerto retornan en 0.00 s, y soltar el maestro tambien. Esta medido
+tres veces, y las nueve cifras estan en `.vitral/ui/procedencia.md`. La regla es para
+el dia que alguna lo haga. Cuesta una linea por comando.
 
 El `Mutex` del mapa es el de la biblioteca estandar y **no se sostiene a traves de
 ningun `await`**: los comandos no esperan a nada mientras lo tienen. Si algun dia uno
@@ -262,7 +271,8 @@ JSON de numeros: cuatro veces mas grande por byte.
 ## ConPTY: lo que hay que saber y no es evidente
 
 Esta seccion existe porque cada punto de aqui costo una sesion de diagnostico. Todo
-esta medido contra `portable-pty` 0.9.0 en esta maquina, no deducido.
+esta medido contra `portable-pty` 0.9.0 en esta maquina, no deducido: el experimento
+y sus nueve medidas estan en `.vitral/ui/procedencia.md`.
 
 ### El fin del PTY no lo marca la muerte del hijo
 
@@ -299,26 +309,6 @@ xterm.js contesta sola, que es la razon de que la interfaz funcione. Cualquier c
 lea de este PTY sin ser un emulador de terminal completo —una prueba, un volcado a
 archivo, un futuro modo sin ventana— **tiene que contestar** `\x1b[1;1R` o quedarse
 colgada en el primer paso.
-
-### Lo que esta medido, no supuesto
-
-Del experimento con `portable-pty` 0.9.0 y `powershell.exe`, reproducido tres veces:
-
-| Hecho | Medida |
-|---|---|
-| `exit` mata al shell limpio | codigo 0, 0.25 s despues |
-| Con el maestro vivo, el lector no ve el final | `read()` sigue bloqueado indefinidamente |
-| Soltar el maestro desbloquea al lector | `read()` devuelve `Ok(0)` acto seguido |
-| Soltar el maestro no bloquea | `ClosePseudoConsole` retorna en 0.00 s |
-| `wait()` sobre un hijo muerto no bloquea | retorna en 0.00 s |
-| Escribir con el hijo muerto no bloquea ni falla | `write_all` retorna `Ok` en 0.00 s |
-| `resize` con el hijo muerto no bloquea | retorna `Ok` en 0.00 s |
-| `kill` sobre un hijo ya muerto no bloquea | retorna `Ok` en 0.00 s |
-| Cerrar el extremo de escritura no descarta lo escrito | el eco de `exit` llego entero antes del cierre |
-
-Las cuatro ultimas son la razon de que la ventana **no** se congele hoy. Son tambien la
-razon de que la regla de los comandos asincronos sea barata: no arregla nada de hoy,
-protege de manana.
 
 ---
 
@@ -385,6 +375,27 @@ trozo de salida y no en medio. Es la razon de que emita el vigia y no el lector.
 Si `wait()` devuelve `Err` —no deberia—, se emite igual con `codigo: 1`, porque el
 contrato promete que la linea de cierre siempre sale. Vale mas un codigo aproximado que
 un panel que se queda mudo, que es justo el fallo que esto arregla.
+
+**Los cinco pasos no se simplifican.** El vigia parece mas complicado de lo necesario y
+no lo es: cada paso esta ahi por un fallo que ya ocurrio o por una medida concreta.
+Cuatro cambios que se ven baratos y estan prohibidos:
+
+- **Quitar el `join` del paso 4.** Parece que el lector ya habra terminado, porque el
+  proceso esta muerto. No lo ha hecho: cerrar el extremo de escritura no descarta lo ya
+  escrito, asi que queda salida en la tuberia. Sin el `join`, `panel:fin` sale **en
+  medio** del ultimo trozo.
+- **Esperar al lector con el bloqueo del mapa en la mano**, ahorrandose el paso 3.
+  Bloquea a los cuatro comandos durante toda la espera y congela la ventana entera, no
+  solo el panel que murio.
+- **Poner un `drop(par.slave)` y fiarse de que llegue un EOF.** Es la trampa central de
+  ConPTY, esta explicada arriba, y ya rompio la interfaz una vez.
+- **Emitir `panel:fin` desde el lector al salir del bucle**, que parece lo natural. El
+  lector no sabe el codigo de salida y ademas sale antes de que el vigia lo sepa. Por
+  eso el lector, al salir, **no emite nada**.
+
+`ui/src-tauri/src/main.rs` implementa estos cinco pasos numerados y en orden, y
+sobrevivio a la tanda de la cuadricula sin tocarse. Reordenarlos o fundirlos es cambiar
+el contrato, no refactorizar: se dice en el handoff antes de tocar nada.
 
 ### Un panel muerto ya no esta en el mapa
 
@@ -644,12 +655,9 @@ se rompe nada mas.
 
 **Ctrl+Shift+C no llega a la pagina en compilaciones de depuracion.** WebView2 la usa
 para el inspector y se la queda antes. No es un fallo del codigo y no se arregla en el
-frontend: en release el inspector no existe y la tecla queda libre. La cadena esta
-verificada en la fuente —`tauri-runtime-wry-2.11.4/src/lib.rs:5209` solo llama a
-`with_devtools` bajo `#[cfg(any(debug_assertions, feature = "devtools"))]`,
-`wry-0.55.1/src/lib.rs:836` deja `devtools: false` fuera de depuracion, y
-`wry-0.55.1/src/webview2/mod.rs:573` lo pasa a `SetAreDevToolsEnabled`— y la feature
-`devtools` no esta entre las de tauri por defecto ni se pide en `Cargo.toml`.
+frontend: en release el inspector no existe y la tecla queda libre. Esta verificado en
+la fuente de `tauri-runtime-wry` y `wry`, y la cadena entera esta en
+`.vitral/ui/procedencia.md`.
 
 Si alguna vez hace falta que funcione tambien en depuracion, la unica via limpia es
 bajar al webview nativo con `with_webview` y poner
@@ -772,19 +780,3 @@ comprobacion manual para que alguien la tache:
     la salida de cada uno va a su celda y ninguna se mezcla.
 14. Al cerrar la ventana con cuatro vivos no queda ningun `powershell.exe` en el
     Administrador de tareas.
-
-## De donde sale lo que dice este archivo
-
-Los nombres de simbolos de `portable-pty`, los campos de `tauri.conf.json`, la ruta
-`window.__TAURI__.core.invoke`, la firma de `term.write`, los nombres de los archivos
-vendorizados, la exigencia del `.ico` y la cadena del inspector **estan verificados**
-contra la documentacion de las versiones de la tabla y contra el codigo de las cajas en
-`~/.cargo/registry`.
-
-La tabla de "lo que esta medido" sale de un experimento con `portable-pty` y
-`powershell.exe` corrido tres veces en esta maquina.
-
-Lo que describe el ciclo de vida de un panel con dos hilos **es diseno, no codigo
-copiado**: al escribirlo, el vigia todavia no existia. En cuanto exista, manda el
-codigo: si algo de aqui no se pudo hacer asi, se dice en el handoff con el motivo y
-este archivo se corrige.
