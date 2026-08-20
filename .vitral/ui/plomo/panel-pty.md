@@ -56,7 +56,12 @@ a cuenta: el `HashMap` y el parametro `id` que durante dos tandas valieron siemp
 
 Queda **el modo corrida**: que cada panel sea un vidrio de una tanda, con el id de la
 tarea, su comando en vez de un shell suelto, y el estado leido de `.vitral/`. Eso es
-otra tanda y aqui no se prepara nada para ella, salvo lo que ya esta: los ids.
+otra tanda y aqui no se prepara nada para ella, salvo lo que ya esta: los ids y el
+`cwd` por panel.
+
+La tanda de proyectos, que es la que introdujo la barra lateral, dio un paso mas en la
+misma direccion: `abrir_panel` recibe su directorio por parametro, y ni Rust ni el
+frontend tienen un "proyecto actual" global. Vale la misma leccion que con el `id`.
 
 Lo que **no** se hace mientras tanto: ni pestanas, ni divisiones arrastrables, ni
 configuracion, ni guardar el scrollback entre arranques, ni leer `.vitral/`. Codigo
@@ -172,18 +177,40 @@ import { FitAddon } from './vendor/addon-fit.mjs';
 Esta tabla es la **unica** fuente de los nombres que cruzan de Rust a JavaScript. Se
 copia literal en los dos lados: sin traducir, sin reordenar, sin renombrar.
 
-No ha cambiado desde que se escribio con un solo panel en pantalla, y la cuadricula no
-la toco: cuatro comandos con `id` y dos eventos con `id` bastan para N paneles igual
-que para uno.
+La cuadricula no la toco: cuatro comandos con `id` y dos eventos con `id` bastaban para
+N paneles igual que para uno. La tanda de proyectos si la toca, y en lo minimo: un
+argumento mas en `abrir_panel` y cuatro comandos nuevos que no hablan de paneles.
 
 ### Comandos
 
 | Comando | Argumentos | Devuelve |
 |---|---|---|
-| `abrir_panel` | `id: String`, `filas: u16`, `columnas: u16` | `Result<(), String>` |
+| `abrir_panel` | `id: String`, `cwd: String`, `filas: u16`, `columnas: u16` | `Result<(), String>` |
 | `escribir_en_panel` | `id: String`, `datos: String` | `Result<(), String>` |
 | `redimensionar_panel` | `id: String`, `filas: u16`, `columnas: u16` | `Result<(), String>` |
 | `cerrar_panel` | `id: String` | `Result<(), String>` |
+| `leer_estado` | — | `Result<Estado, String>` |
+| `anadir_proyecto` | `ruta: String` | `Result<Estado, String>` |
+| `quitar_proyecto` | `ruta: String` | `Result<Estado, String>` |
+| `guardar_preferencias` | `activo: Option<String>`, `plegada: bool` | `Result<(), String>` |
+
+`Estado` es lo que ve el frontend, y **no** es lo que hay en el archivo: lleva el nombre
+y la disponibilidad ya calculados, que el archivo no guarda.
+
+```json
+{
+  "proyectos": [
+    { "ruta": "C:\\Programacion\\Proyectos\\Vitral", "nombre": "Vitral", "disponible": true },
+    { "ruta": "D:\\viejo\\motor", "nombre": "motor", "disponible": false }
+  ],
+  "activo": "C:\\Programacion\\Proyectos\\Vitral",
+  "plegada": false
+}
+```
+
+Los tres comandos que devuelven `Estado` devuelven **el estado entero ya recalculado**,
+no un parche. El frontend repinta con lo que recibe y no mantiene su propia copia
+divergente.
 
 Los argumentos viajan de JS a Rust en camelCase. Como ninguno lleva mayusculas
 intermedias, se escriben igual en los dos lados. Es deliberado: **no se anaden
@@ -468,11 +495,186 @@ faltaba, y se anadio ese. No se abrio la capability entera por comodidad.
 
 ---
 
+## Proyectos
+
+Vitral abre proyectos. Un proyecto es **una ruta en disco y nada mas**: no se copia, no
+se importa, no se registra nada dentro de el. Lo fija el rumbo y esta tanda no lo
+discute.
+
+**Vitral no lee ni indexa el codigo del proyecto.** Ni un arbol, ni una cache, ni una
+lista de archivos. Lo unico que se mira de una ruta es que exista y sea un directorio.
+Si al implementar aparece la tentacion de enumerar lo que hay dentro, la respuesta es
+no, y se anota en el handoff en vez de hacerlo.
+
+### Donde se guarda la lista
+
+En la aplicacion, fuera de todo repositorio:
+
+```
+%APPDATA%\com.vitral.ui\estado.json
+```
+
+Verificado en la fuente, no supuesto: `app.path().app_config_dir()` de tauri 2.11.5
+(`src/path/desktop.rs:238`) resuelve a `dirs::config_dir()/${identifier}`; en Windows
+`dirs 6.0.0` devuelve `known_folder_roaming_app_data()`; y el `identifier` de
+`tauri.conf.json` es `com.vitral.ui`. En esta maquina, eso es
+`C:\Users\josee\AppData\Roaming\com.vitral.ui\`.
+
+**Esto no necesita ningun permiso nuevo.** Los permisos de Tauri v2 gobiernan lo que
+invoca el webview. El archivo lo lee y lo escribe Rust, y lo expone con comandos
+propios, que no llevan entrada de capability. La prueba esta en este mismo repositorio:
+los cuatro comandos de panel funcionan con `core:default` y `core:window:allow-close` y
+nada mas.
+
+### La forma del archivo
+
+Guarda **rutas y preferencias, nada calculado**:
+
+```json
+{
+  "proyectos": [
+    "C:\\Programacion\\Proyectos\\Vitral",
+    "C:\\Programacion\\Proyectos\\motor"
+  ],
+  "activo": "C:\\Programacion\\Proyectos\\Vitral",
+  "plegada": false
+}
+```
+
+| Campo | Tipo | Regla |
+|---|---|---|
+| `proyectos` | array de cadenas | Rutas absolutas y normalizadas, en el orden en que se anadieron |
+| `activo` | cadena o `null` | Una de las de `proyectos`, o `null` si no hay ninguno activo |
+| `plegada` | booleano | Si la barra lateral esta plegada |
+
+**El nombre de un proyecto no se guarda**: es el ultimo segmento de su ruta, calculado
+cada vez. Su disponibilidad tampoco: se comprueba contra el disco. El archivo guarda
+rutas; el comando devuelve la vista.
+
+### Cuando se escribe y cuando se lee
+
+Se escribe entero —no se parchea— despues de cada cambio que lo afecte: anadir, quitar,
+cambiar de activo, plegar o desplegar. Si la escritura falla, el comando devuelve `Err`
+y el frontend lo dice, pero **el estado en memoria no se revierte**: lo que el usuario
+ve en pantalla ya cambio, y deshacerlo por detras es peor que avisar.
+
+Se lee una vez al arrancar. Si no existe, se arranca con la lista vacia y **el archivo
+no se crea hasta el primer cambio**. Si existe y no parsea, o le falta un campo, o un
+campo tiene el tipo equivocado:
+
+- Se arranca con la lista vacia.
+- **El archivo no se borra ni se sobrescribe** hasta que el usuario haga un cambio.
+  Borrar la lista de alguien por un fallo nuestro no es una opcion.
+- Se dice en pantalla, con el texto de la tabla de estados vacios.
+
+### Disponibilidad
+
+Una ruta esta **disponible** si existe y es un directorio. Se comprueba en dos momentos
+y en ninguno mas: **al arrancar** y **al activar**. No hay comprobacion periodica, ni al
+recuperar el foco de la ventana.
+
+Consecuencia que hay que aceptar, y por eso se escribe: si un disco se desconecta con su
+proyecto ya activo, la lista lo sigue mostrando disponible y sus paneles siguen vivos,
+porque su PTY ya arranco con el `cwd` puesto. Abrir un panel nuevo ahi falla con el
+error de ruta. Es deliberado: comprobar en cada pintada seria tocar disco sin parar para
+un caso que casi nunca pasa.
+
+Un proyecto no disponible **se queda en la lista**, marcado, y no se puede activar. No
+se borra: un disco desmontado vuelve, y quitarle la entrada al usuario por una causa
+temporal es perderle trabajo.
+
+### Anadir un proyecto
+
+El selector nativo lo abre el frontend:
+
+```js
+import { open } from '@tauri-apps/plugin-dialog';
+const ruta = await open({ directory: true, multiple: false });
+```
+
+Devuelve la ruta o `null` si se cancela; `null` no es un error y no muestra nada.
+
+**`recursive` no se pone nunca.** Su propia documentacion dice *"indicates that it will
+be read recursively later"*, que es exactamente lo que el rumbo prohibe. Por lo mismo se
+descarto `<input webkitdirectory>`, que enumera el proyecto entero.
+
+La ruta va a `anadir_proyecto`, que la valida **en Rust**. El frontend no valida rutas:
+no sabe de discos.
+
+| Caso | Que hace `anadir_proyecto` |
+|---|---|
+| Ruta valida y nueva | La anade al final de `proyectos` y devuelve el estado |
+| Ruta que ya esta en la lista | **No la duplica.** Devuelve el estado sin cambios |
+| Ruta que no existe | `Err` con el mensaje de la tabla |
+| Ruta que existe pero es un archivo | `Err`, el mismo mensaje: aqui un archivo es "no hay directorio" |
+| Ruta relativa | `Err`. Solo se guardan absolutas |
+
+**La comparacion de rutas no distingue mayusculas**, porque esto es Windows, y se hace
+sobre la forma absoluta y normalizada. `C:\Proy\Vitral` y `c:/proy/vitral` son el mismo
+proyecto y no entran dos veces.
+
+### Quitar un proyecto
+
+Quitar **mata sus paneles**, como si se hubieran cerrado uno a uno: mismo camino que
+`cerrar_panel`, sin atajos.
+
+Si el que se quita es el activo, **`activo` pasa a `null`** y la rejilla muestra el
+estado vacio, aunque queden otros proyectos en la lista. No se elige uno por el usuario.
+
+### El `cwd` de un panel es del panel
+
+`abrir_panel` recibe `cwd` como un parametro mas, junto al `id`. **No hay ningun
+"directorio actual" global**, ni en Rust ni en JavaScript. Es la misma leccion que dio
+el `id`: lo que algun dia va a variar por panel entra por parametro desde el principio.
+
+Y **Rust no sabe cual es el proyecto activo.** Rust conoce dos cosas: el archivo de
+estado, que persiste, y los paneles, cada uno con su `cwd`. Quien esta activo lo sabe el
+frontend. Si Rust guardara "el proyecto actual", abrir dos a la vez seria una
+reescritura, y eso es justo lo que el rumbo manda no cerrar.
+
+**Rust valida el `cwd` antes de lanzar, y no es opcional.** Verificado en la fuente de
+`portable-pty` 0.9.0, `CommandBuilder::current_directory()` en `src/cmdbuilder.rs`:
+
+```rust
+let cwd = self.cwd.as_deref().filter(|path| Path::new(path).is_dir());
+let dir = cwd.or(home);
+```
+
+**Un `cwd` que no existe se descarta en silencio** y el proceso arranca en
+`USERPROFILE`. No hay error y no hay aviso: el panel abre, el prompt aparece, y esta en
+el home del usuario en vez de en el proyecto. `CreateProcessW` no falla, porque el
+directorio malo ya se tiro antes de llegar ahi.
+
+Asi que `abrir_panel` comprueba que `cwd` existe y es un directorio **antes** de
+`openpty`, y devuelve `Err` si no. Y se pasa siempre **absoluto**: `portable-pty` une las
+rutas relativas contra `std::env::current_dir()`, que es exactamente el global que no
+debe existir.
+
+### Los mensajes exactos
+
+Se copian literales. Los checks futuros los van a comparar palabra por palabra.
+
+| Situacion | Mensaje |
+|---|---|
+| Ruta que no existe o no es un directorio | `no hay ningun directorio en "<ruta>"` |
+| Ruta relativa al anadir | `la ruta del proyecto tiene que ser absoluta: "<ruta>"` |
+| `cwd` invalido en `abrir_panel` | `el directorio del panel "<id>" no existe: <cwd>` |
+| No se pudo escribir el estado | `no se pudo guardar la lista de proyectos: <causa>` |
+| No se pudo leer el estado | `no se pudo leer la lista de proyectos: <causa>` |
+
+---
+
 ## El frontend
 
-`ui/web/index.html` carga `vendor/xterm.css`, un contenedor de rejilla y `panel.js`
-como modulo. Nada mas: sin barras, sin menus, sin botones, sin titulos. La rejilla
-ocupa la ventana entera.
+`ui/web/index.html` carga `vendor/xterm.css`, la barra lateral, un contenedor de rejilla
+y `panel.js` como modulo. Sin menus, sin botones de ventana, sin titulos. La barra y la
+rejilla se reparten el ancho; juntas ocupan la ventana entera.
+
+**Cada proyecto tiene su propia rejilla.** Al cambiar de activo se oculta la del anterior
+y se muestra la del nuevo; los paneles ocultos **siguen vivos**, con su PTY corriendo.
+Al volver a mostrarlos hay que reajustarlos, porque sus celdas pudieron cambiar de
+tamano mientras no se veian: es el mismo `ResizeObserver` que ya existe, pero un
+elemento oculto no dispara nada, asi que **el reajuste al mostrar se hace a mano**.
 
 `ui/web/panel.js` tiene dos piezas y una linea de arranque:
 
@@ -616,7 +818,7 @@ Y la rejilla:
 |---|---|
 | Separacion entre celdas | `2px` |
 | Borde de una celda | `2px` solido, siempre presente |
-| Borde de la celda enfocada | `#3b78ff` |
+| Borde de la celda enfocada | `#fde047` |
 | Borde de las demas | `#2a2a2a` |
 
 El borde esta **siempre**, y solo cambia de color. Si apareciera y desapareciera, cada
@@ -628,6 +830,97 @@ que distingue un panel de otro. **No hay etiqueta ni titulo por panel, y es
 deliberado**: la etiqueta es justo lo que hara falta cuando un panel sea un vidrio y
 tenga el id de una tarea que mostrar, y eso es la tanda del modo corrida.
 
+### Como se ve la barra lateral
+
+Es contrato, no gusto personal: si no se escribe, cada agente elige otra cosa.
+
+Paleta **Vidriera**. Un vitral es vidrio de color separado por plomo: el fondo oscuro es
+el plomo, y el color solo aparece en lo que esta vivo.
+
+| Token | Valor | Donde |
+|---|---|---|
+| `barra-fondo` | `#0e0e0a` | fondo de la barra lateral |
+| `barra-borde` | `#262218` | divisor entre la barra y la rejilla |
+| `texto` | `#d0cbbd` | nombre de un proyecto |
+| `texto-tenue` | `#847c69` | texto secundario y estados vacios |
+| `hover-fondo` | `#17140c` | fila con el raton encima |
+| `activo-fondo` | `#201a0c` | fila del proyecto activo |
+| `activo-marca` | `#bef264` | barra vertical en el borde izquierdo de la fila activa |
+| `activo-texto` | `#fde047` | nombre del proyecto activo |
+| `no-disponible` | `#5a5347` | nombre de un proyecto cuya ruta no resuelve |
+| `error` | `#ef4444` | mensajes de error |
+
+Contrastes medidos contra su propio fondo, no supuestos: texto 11.9, tenue 4.7, marca
+13.2, texto activo 13.1, error 5.1. **`no-disponible` se queda en 2.5 a proposito**: es
+el estado deshabilitado y tiene que verse apagado.
+
+**Los dos amarillos y el lima significan cosas distintas y no se intercambian:**
+
+- **`#fde047` es "lo que esta activo ahora"**, en dos niveles: el nombre del proyecto
+  activo en la barra, y el borde del panel enfocado en la rejilla. Es el mismo amarillo
+  a proposito, y por eso el borde de foco dejo de ser azul.
+- **`#bef264` marca cual es el proyecto activo**, no donde esta el foco. Solo aparece en
+  la barra, nunca en la rejilla.
+
+### Medidas de la barra
+
+| Cosa | Valor |
+|---|---|
+| Ancho desplegada | `260px` |
+| Ancho plegada | `24px` |
+| Divisor con la rejilla | `1px` solido, `barra-borde` |
+| Alto de una fila | `32px` |
+| Marca del proyecto activo | `3px` de ancho, alto completo de la fila |
+| Escala de espaciado | `4 / 8 / 12 / 16 / 24`, y **nada fuera de ella** |
+| Tipografia | `'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif` |
+| Tamano de la lista | `13px` |
+
+El terminal **no cambia de tipografia**: sigue en `'Cascadia Mono'` a `14`, como dice la
+tabla de arriba.
+
+La ruta completa **no ocupa linea**: va como atributo `title` de la fila, que el sistema
+muestra al detenerse encima. Un nombre que no cabe en `260px` se corta con puntos
+suspensivos.
+
+### Los estados de una fila
+
+| Estado | Como se ve |
+|---|---|
+| normal | `texto` sobre `barra-fondo`, sin marca |
+| hover | fondo `hover-fondo` |
+| activo | fondo `activo-fondo`, nombre en `activo-texto`, marca `activo-marca` a la izquierda |
+| no disponible | nombre en `no-disponible`, sin hover y sin cursor de mano |
+| error | el mensaje va en `error` debajo de la lista, **no** dentro de la fila |
+
+**No hay estado de carga, y es deliberado.** Leer un JSON pequeno y comprobar que unos
+directorios existen es instantaneo; un indicador que nunca se ve es codigo muerto que
+alguien tendra que revisar igual. Si algun dia se comprueban rutas de red lentas, entra
+entonces y con su tanda.
+
+### Los estados vacios, que no son el mismo
+
+Se distinguen a proposito: caer del segundo en el primero, en silencio, esconde que algo
+se rompio. Textos literales, centrados en la zona de la rejilla:
+
+| Cuando | Texto exacto | Color |
+|---|---|---|
+| La lista esta vacia | `Todavia no has abierto ningun proyecto.` | `texto-tenue` |
+| Hay proyectos pero ninguno activo | `Elige un proyecto de la lista.` | `texto-tenue` |
+| El ultimo activo ya no esta disponible | `El ultimo proyecto abierto ya no esta disponible.` | `error` |
+| El archivo de estado no se pudo leer | `No se pudo leer la lista de proyectos. No se ha borrado nada.` | `error` |
+
+### Lo que no lleva tratamiento, a proposito
+
+- **Ningun panel lleva etiqueta ni titulo**, y sigue siendo cierto con proyectos: la
+  rejilla entera es del proyecto activo, que ya esta dicho en la barra. La etiqueta se
+  guarda para el modo corrida, que es cuando un panel tendra algo propio que decir.
+- **No hay icono por proyecto.** Ni de carpeta, ni de lenguaje, ni derivado del
+  contenido: deducirlo obligaria a mirar dentro del proyecto, que es lo que no se hace.
+- **No hay contador de paneles por proyecto en la barra.** Es informacion de la rejilla,
+  y meterla en la lista adelanta trabajo del modo corrida sin que nadie lo haya pedido.
+- **La barra no se puede redimensionar arrastrando.** El ancho es `260px` y punto;
+  arrastrar pide guardar la medida, y eso es una preferencia mas que nadie ha pedido.
+
 ### El teclado
 
 | Tecla | Que hace |
@@ -637,6 +930,7 @@ tenga el id de una tarea que mostrar, y eso es la tanda del modo corrida.
 | Ctrl+Shift+V | pega el portapapeles en el PTY |
 | Ctrl+Shift+N | abre un panel mas, hasta el tope |
 | Ctrl+Shift+W | cierra el panel enfocado; si es el ultimo, cierra la ventana |
+| Ctrl+Shift+B | pliega y despliega la barra lateral |
 | seleccion con el raton | la trae xterm de serie |
 | clic en un panel | le da el foco |
 
@@ -697,6 +991,14 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 | Llega un evento de otro id | Se ignora. Por eso se comprueba el id |
 | Se cierra la ventana con procesos vivos | Se matan todos. No queda ningun `powershell.exe` huerfano |
 | Se cierra la ventana con el panel ya muerto | El vigia ya borro la entrada; no hay nada que matar y no es un error |
+| `abrir_panel` con un `cwd` que no existe | `Err` **antes** de abrir el PTY. `portable-pty` no avisaria: arrancaria en el home |
+| Se desconecta el disco del proyecto activo | Sus paneles siguen vivos; la lista lo sigue dando por disponible hasta el proximo arranque o activacion. Abrir uno nuevo falla |
+| Se anade una ruta que ya esta en la lista | No se duplica. El estado vuelve sin cambios y no es un error |
+| Se quita el proyecto activo | Sus paneles mueren y `activo` pasa a `null`. La rejilla muestra el estado vacio aunque queden otros |
+| Se activa un proyecto no disponible | No se deja. La fila no responde al clic |
+| `estado.json` no parsea | Lista vacia, el archivo **no se toca**, y se dice en pantalla |
+| El selector de carpeta se cancela | Devuelve `null`. No es un error y no se muestra nada |
+| Se pliega la barra con un panel enfocado | El foco no se mueve. Solo cambia el ancho, y se reajustan todos los PTY |
 | `cerrar_panel` gana la carrera al vigia | La entrada ya no esta cuando el vigia va a quitarla. No es un error, y `panel:fin` se emite igual, una sola vez |
 | Se redimensiona la ventana muy rapido | Cada aviso del `ResizeObserver` llama a `fit()` y a `redimensionar_panel`. No hace falta amortiguarlo |
 | `Ctrl+Shift+N` con cuatro paneles ya abiertos | No hace nada, y no se muestra ningun aviso |
@@ -717,7 +1019,8 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 ## Que no se toca desde la interfaz
 
 - Todo `src/`, `vitral.mjs` y `pruebas/checks.mjs`. El motor de Node no cambia por una
-  tanda de interfaz.
+  tanda de interfaz. **Tampoco por la tanda de proyectos**: la interfaz no lanza el
+  motor todavia, y cuando lo lance sera con el `cwd` puesto, sin bandera nueva.
 - `.vitral/plomo/`, `.vitral/planificar/` y `.vitral/ui/`, incluido este archivo.
 - `ejemplo/`, `.gitattributes`, `LICENSE`.
 - `.gitignore`, salvo que una tanda lo pida explicitamente. Las lineas de `cargo` ya
@@ -730,7 +1033,11 @@ Un caso que el contrato no cubre lo resuelve cada agente a su manera.
 - Mas de cuatro paneles. El tope esta puesto por una cuenta de caracteres, no por
   miedo: subirlo pide antes una ventana mas grande o una fuente mas pequena.
 - Etiquetas o titulos por panel.
-- Nada que lea `.vitral/`.
+- Nada que lea `.vitral/`. Ni el de la aplicacion ni el de ningun proyecto.
+- Lanzar el motor, y cualquier cosa del modo corrida.
+- Leer, indexar o enumerar el contenido de un proyecto, por ningun camino.
+- Redimensionar la barra arrastrando, y guardar su ancho.
+- Reabrir los paneles que habia al arrancar. Se recuerda el proyecto activo, no sus paneles.
 - Ningun `package.json` ni `node_modules`.
 - Ningun instalador, ningun juego de iconos.
 - Ni Linux ni macOS. El codigo sale portable porque `portable-pty` lo es, pero lo unico
@@ -780,3 +1087,26 @@ comprobacion manual para que alguien la tache:
     la salida de cada uno va a su celda y ninguna se mezcla.
 14. Al cerrar la ventana con cuatro vivos no queda ningun `powershell.exe` en el
     Administrador de tareas.
+
+Y los de la tanda de proyectos. El punto 15 es el que mas facil se da por bueno sin
+mirar, y es el que justifica la tanda entera:
+
+15. **Con un proyecto activo, un panel nuevo arranca dentro de el.** Se comprueba
+    escribiendo `pwd` en el panel: tiene que salir la ruta del proyecto, no la del
+    usuario ni la de la aplicacion.
+16. Anadir un proyecto con el selector lo mete en la lista y lo deja activable.
+17. Anadir el mismo dos veces no lo duplica.
+18. Cambiar de proyecto oculta la rejilla del anterior y muestra la del nuevo, y los
+    paneles del anterior siguen escribiendo cuando se vuelve a el.
+19. Al volver a un proyecto, sus paneles tienen el tamano correcto: nada cortado, nada
+    con la salida en escalera.
+20. Quitar el proyecto activo mata sus paneles y deja el estado vacio.
+21. Renombrar la carpeta de un proyecto por fuera y reiniciar: sale marcado como no
+    disponible, sigue en la lista, y no se puede activar.
+22. Borrar `estado.json` y arrancar: lista vacia, sin error, y el archivo no reaparece
+    hasta anadir el primer proyecto.
+23. Meter basura en `estado.json` y arrancar: lista vacia, el mensaje de error, y el
+    archivo **sigue con la basura dentro**, sin sobrescribir.
+24. Ctrl+Shift+B pliega y despliega, y los PTY se reajustan en los dos sentidos.
+25. **El borde del panel enfocado es amarillo `#fde047`, no azul.** Cambio a proposito
+    en esta tanda: quien probo la cuadricula va a esperar azul.

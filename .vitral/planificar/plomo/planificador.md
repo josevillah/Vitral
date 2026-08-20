@@ -352,6 +352,30 @@ fuente quieres?" no le sirve de nada a nadie. La regla que reparte es una sola:
 Dos preguntas, entonces, y no seis. El resto son decisiones tecnicas que el
 planificador toma solo y anuncia.
 
+### Antes de proponer: preguntar si ya hay direccion
+
+**Esta es la primera pregunta de la fase, y va antes que cualquier propuesta.**
+
+> ¿Tienes ya una direccion para esto —colores, referencia, algo que hayas visto— o
+> propongo yo?
+
+Salio de una sesion real, y del modo mas caro de aprenderlo. El planificador solto tres
+paletas completas de golpe; la persona tenia una direccion en la cabeza desde el
+principio —colores de vidrio, verde limon y amarillo, porque el producto se llama
+Vitral— y ninguna de las tres se acercaba. Las tres propuestas fueron trabajo tirado y,
+peor, **le toco a ella frenar al planificador**, que es exactamente lo que la fase
+existia para evitarle.
+
+Proponer a ciegas es el camino para cuando **no** hay direccion, no el camino por
+defecto. Con direccion, el planificador la toma como restriccion de entrada y propone
+dentro de ella; sin direccion, propone y ella elige.
+
+Y una cosa que solo se descubre preguntando: **la direccion casi nunca es arbitraria.**
+La de Vitral salia del nombre del producto y de su propio vocabulario —plomo y vidrio—,
+y una vez dicha, el fondo oscuro que ya era contrato dejo de ser "terminal sobria" para
+ser el plomo entre los vidrios. Eso no se deduce desde fuera y no hay forma de acertarlo
+proponiendo.
+
 ### Como se propone
 
 Aqui es donde la fase se estropea si se hace mal. **Se proponen paletas completas
@@ -382,6 +406,18 @@ se lleva al plomo siga siendo una paleta completa y no un parche.
 estados tiene la superficie; despues se propone una paleta que los cubra todos. Al
 reves salen paletas bonitas a las que les falta el color de "deshabilitado", y ese
 color acaba eligiendolo un agente.
+
+**Y la paleta casi nunca esta en blanco.** Si ya hay superficie entregada, sus colores
+ya son contrato y las propuestas nacen dentro de ellos, no al lado. Conviene decirle a
+la persona cuales son antes de que elija, porque son la restriccion real: en la tanda de
+proyectos, cuatro valores del terminal ya estaban fijados y la barra lateral tenia que
+nacer dentro de esos cuatro.
+
+**Los contrastes se miden, no se estiman.** Cuesta un minuto y evita fijar en el
+contrato un texto secundario que no se lee. En esa misma tanda, el `texto-tenue` de las
+tres propuestas se quedaba entre 3.6 y 3.8 sobre su fondo, por debajo del minimo de 4.5,
+y se corrigio antes de ensenarlas. El estado deshabilitado es la excepcion y va por
+debajo a proposito: tiene que verse apagado.
 
 ### Lo que se fija sin preguntar
 
@@ -795,6 +831,8 @@ gastar menos, y no son intercambiables. Es otra tanda, y su plomo empieza aqui.
 | Topes de presupuesto heredados de otro modelo | Nadie lo detecta. Al poner `modelo`, multiplicar todos los topes por la razon de tarifas de la tabla de modelos |
 | Una tanda con superficie visible y sin tabla "Como se ve" | Nadie lo detecta, y el plan sale igual de convincente. Solo se caza en la fase 3 |
 | Una paleta propuesta en adjetivos | Nadie lo detecta. "Sobria y profesional" no es una paleta: se proponen bloques cerrados con todos los valores |
+| Proponer paletas sin preguntar antes si ya hay direccion | Nadie lo detecta, y el coste lo paga la persona teniendo que frenar al planificador. Es la primera pregunta de la fase 3 |
+| Proponer colores sin mirar los que ya son contrato | Nadie lo detecta. Si hay superficie entregada, sus valores son la restriccion de entrada y se dicen antes de que la persona elija |
 | Un plomo de una tanda vieja que sigue en `.vitral/plomo/` | La cabecera de `--seco` dice cuantos archivos de plomo hay y cuanto pesan |
 | Un boceto ya ejecutado que sigue en `.vitral/boceto.json` | Nadie lo detecta. `node vitral.mjs` sin banderas lo relanza tal cual, y si su plomo ya se movio, los agentes corren sin contrato y el prompt no lo dice |
 | Un handoff viejo de un id que se repite entre tandas | Nadie lo detecta. `--solo` se salta las dependencias que tienen handoff en disco sin mirar de que tanda son, e inyecta el contenido viejo en el prompt del dependiente |
