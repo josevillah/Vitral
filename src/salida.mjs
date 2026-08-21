@@ -38,7 +38,14 @@ const emitir = (evt, datos) =>
   process.stdout.write(JSON.stringify({ evt, t: new Date().toISOString(), ...datos }) + '\n');
 
 // Las rutas viajan con barras hacia delante tambien en Windows: en el evento son
-// un dato, no la ruta del sistema de quien corrio el motor.
+// un dato, no la ruta del sistema de quien corrio el motor. Vale tambien para las
+// que van dentro de la prosa de `mensaje` y `sugerencia`: no para poder
+// extraerlas de una frase -eso sigue sin contratarse-, sino para que un
+// consumidor que las pinte no ensene dos barras distintas en la misma ventana.
+//
+// Convierte el SEPARADOR DE ESTE SISTEMA, no el caracter: en POSIX no hace nada
+// y una barra invertida dentro de un nombre sobrevive, que es lo correcto porque
+// ahi no es un separador. Un replaceAll('\\', '/') corromperia esos nombres.
 const conBarras = (ruta) => ruta.split(path.sep).join('/');
 
 export function modoJson(activo) {
@@ -84,7 +91,10 @@ const SANGRIA_AVISO = ' '.repeat('aviso: '.length);
 const sangrar = (lineas, sangria) => lineas.join(`\n${sangria}`);
 
 export function imprimirError(mensaje, sugerencia, detalles = []) {
-  if (json) return emitir('error', { mensaje, sugerencia: sugerencia || null });
+  if (json) {
+    return emitir('error',
+      { mensaje: conBarras(mensaje), sugerencia: sugerencia ? conBarras(sugerencia) : null });
+  }
 
   // El mensaje y los detalles van en rojo y en el mismo bloque; la sugerencia,
   // debajo y en tenue.
@@ -109,8 +119,12 @@ function imprimirAviso(mensaje, detalles = []) {
 // igual y asi no hace falta un caso especial.
 export function veredicto({ nivel, mensaje, sugerencia = null, detalles = [] }) {
   if (json) {
-    return emitir('veredicto',
-      { nivel, mensaje, sugerencia: sugerencia || null, detalles: detalles || [] });
+    return emitir('veredicto', {
+      nivel,
+      mensaje: conBarras(mensaje),
+      sugerencia: sugerencia ? conBarras(sugerencia) : null,
+      detalles: (detalles || []).map((detalle) => conBarras(detalle)),
+    });
   }
   if (nivel === 'aborta') imprimirError(mensaje, sugerencia, detalles || []);
   else imprimirAviso(mensaje, detalles || []);

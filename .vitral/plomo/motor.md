@@ -293,20 +293,75 @@ const emitir = (evt, datos) =>
    motor, y un consumidor que reciba las dos barras segun el campo tiene un
    problema que no puede resolver desde fuera.
 
-   **La excepcion es que no hay excepcion de campo: `mensaje` y `sugerencia` no
-   son campos con una ruta, son prosa.** Van tal cual se redactaron, con el
-   separador del sistema, y ahi si aparece la barra invertida en Windows. No se
-   normalizan, y el motivo no es pereza: un consumidor no puede extraer una ruta
-   de una frase en castellano con fragmentos entrecomillados, asi que ponerle
-   barras hacia delante solo le daria la **apariencia** de una ruta parseable sin
-   contrato detras. Eso invita a un regex sobre texto libre que se rompe en cuanto
-   alguien reformule el mensaje. Si un consumidor necesita esa ruta, **se le da un
-   campo**; hasta entonces, `mensaje` y `sugerencia` son para leer.
+   **Y no hay excepcion de prosa: las rutas que aparecen dentro de `mensaje`, de
+   `sugerencia` y de cada elemento de `detalles` tambien van con barra hacia
+   delante.** Antes no se normalizaban, por ser prosa y no campos; se revierte a
+   proposito. Mientras el modo json emitiera las dos barras, cualquier consumidor
+   que **pinte** esos textos ensenaba rutas de dos formas en la misma ventana, y
+   eso no lo puede arreglar desde fuera. Se normaliza para que lo que se lee sea
+   uniforme.
 
-   Hoy la normalizacion se aplica en `salida.mjs` (`conBarras`, en `corrida.boceto`,
-   `cierre.marca` y `fallo.logs`) y en `rutas.mjs` (`normalizarRuta`, de donde
-   salen los `veredicto.detalles` de los solapamientos). Que la lista este completa
-   es la regla; que sean esos seis sitios es el estado de hoy.
+   **La semantica es la parte que se malinterpreta: se convierte el separador de
+   este sistema, no el caracter `\`.** La cuenta es la de `conBarras`, o sea
+   `ruta.split(path.sep).join('/')`. En Windows `path.sep` es `\`, asi que
+   `.vitral\plomo` sale `.vitral/plomo`; en POSIX `path.sep` es `/`, asi que la
+   funcion **no hace nada** y una barra invertida que hubiera dentro de un nombre
+   sobrevive, que es lo correcto: ahi `\` es un caracter legal de un nombre de
+   archivo y no un separador. Un `mensaje.replaceAll('\\', '/')` daria lo mismo en
+   Windows y **corromperia** nombres legitimos en POSIX, asi que no se hace. La
+   regla que queda dicha es que **el evento reporta las rutas en forma canonica
+   para el sistema que las produjo**, y esa es la unica diferencia de
+   comportamiento entre sistemas, deliberada.
+
+   **De `mensaje` sigue sin poder extraerse una ruta, y eso no es lo que se
+   revierte.** Un consumidor no puede sacar una ruta de una frase en castellano
+   con fragmentos entrecomillados, y ponerle barras hacia delante no lo hace
+   posible: se normaliza para que se **lea** uniforme, no para que se parsee. Un
+   regex sobre texto libre se sigue rompiendo en cuanto alguien reformule el
+   mensaje. Si un consumidor necesita esa ruta, **se le da un campo**.
+
+   Consecuencia de esto que conviene tener escrita para que nadie la descubra como
+   un fallo: cuando el mensaje **cita** lo que la persona escribio en su boceto
+   —un `"plomos": ["retirados\historial.md"]` tecleado en Windows—, la cita sale
+   canonica, `retirados/historial.md`, y deja de ser literal. En json todo va
+   canonico, incluida la cita; quien quiera ver lo que se tecleo tal cual lo tiene
+   en el modo texto. La alternativa —normalizar unas rutas si y las citadas no—
+   exige distinguirlas dentro de una frase en castellano, que es justo el analisis
+   que no se puede hacer.
+
+   **El modo texto NO se normaliza. Ni una coma**, y esto tampoco es lo que se
+   revierte. Tres razones, y la tercera es la que manda:
+
+   1. **Hay seis bloques fijados palabra por palabra que se pondrian rojos.** Los
+      checks 25 a 30 de `pruebas/checks.mjs` comparan caracter a caracter los
+      bloques de `revisarRama`, `revisarBoceto`, `revisarSolapamientos`,
+      `revisarPresupuestos`, `revisarCwd` y `revisarSobrescritura`, y el
+      "arreglo" seria reescribir el texto esperado: o sea cambiar la superficie
+      de texto del CLI de paso mientras se hace otra cosa, que es lo que este
+      archivo dice que no se hace.
+   2. **En un terminal de Windows, `.vitral\plomo` es lo que teclearia quien lo
+      esta leyendo.** El modo texto tiene un lector humano sentado delante de
+      **este** sistema; el modo json tiene un programa que junta datos de donde
+      sea.
+   3. **Los dos modos no son el mismo texto con distinta envoltura**, y este
+      mismo archivo ya lo dice mas arriba: `--json` **sustituye** al texto, no
+      convive con el. Ya difieren en mas cosas —la paleta ANSI vacia, los dos
+      canales fundidos en uno, `ms` y `costo` en crudo en vez de formateados,
+      `finOla` y `finEnsayo` que no emiten nada—. Que la misma ruta se pinte
+      distinto en cada uno es de la misma familia: mismos hechos, distinta forma
+      de decirlos, segun quien lea. Lo que si es identico entre modos, y sigue
+      siendolo, son los codigos de salida.
+
+   Hoy la normalizacion se aplica en `salida.mjs` (`conBarras`, en
+   `corrida.boceto`, `cierre.marca`, `fallo.logs`, en el `mensaje` y la
+   `sugerencia` del evento `error`, y en el `mensaje`, la `sugerencia` y **cada
+   elemento** de `detalles` del evento `veredicto`) y en `rutas.mjs`
+   (`normalizarRuta`, de donde salen los `veredicto.detalles` de los
+   solapamientos). Que la lista este completa es la regla; que sean esos sitios es
+   el estado de hoy. `conBarras` sigue siendo privada de `salida.mjs`: no se
+   exporta, no se mueve y no cambia. Los dos bordes van sin caso especial: una
+   `sugerencia` nula sigue saliendo `null` —no se llama a `conBarras` sobre
+   `null`— y un `detalles` vacio sigue saliendo `[]`.
 4. **El evento nunca lleva la salida cruda del agente.** Eso ya esta entero en
    `.vitral/logs/<id>.json`, y esa disposicion es de `registro.mjs`.
 
@@ -375,7 +430,9 @@ Lo que no es evidente de cada campo:
   de `veredicto` las produce. Un `error` y un `veredicto` de nivel `aborta` son
   **dos eventos distintos a proposito**, y es la distincion de la invariante 2:
   un `ErrorVitral` es "el plan no se puede ni intentar"; un veredicto que aborta
-  es un juicio sobre un plan que si se entiende.
+  es un juicio sobre un plan que si se entiende. `mensaje` y `sugerencia` salen
+  con las rutas en barra hacia delante, como manda la regla 3, y lo mismo vale
+  para el `veredicto`, donde ademas se normaliza cada elemento de `detalles`.
 - **`historial`** — **un solo evento con el array dentro**, no uno por fila: es
   una consulta con respuesta finita, no un flujo de momentos. Vacio, `corridas`
   es `[]` y no hay ningun otro evento: eso sustituye a `historialVacio`.

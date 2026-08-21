@@ -323,22 +323,41 @@ primera version de esta seccion: se genero llamando al codigo, como manda
 `motor.md`, pero en la maquina equivocada. Generar no basta; hay que generar
 donde corre.
 
-### Y por que aqui no se normaliza, aunque el modo json normalice
+### Y por que estos bloques no se normalizan, aunque el modo json si
 
-Esto va a parecer una incoherencia con la regla del modo json de `motor.md`, y no
-lo es: **esa regla es de los campos, y esto es prosa.** `mensaje` y `sugerencia`
-son texto para que lo lea una persona, no un dato que un consumidor extraiga. Un
-consumidor no puede sacar una ruta de una frase en castellano con fragmentos
-entrecomillados, y ponerle barras hacia delante no lo haria posible: le daria la
-apariencia de una ruta parseable sin contrato detras, que es peor, porque invita
-al regex que se rompe en cuanto alguien reformule el mensaje.
+Cuidado con esta seccion si vienes de leer la regla 3 del modo json de
+`motor.md`: **en el modo json esa ruta si sale normalizada**, tambien dentro de
+`mensaje` y de `sugerencia`. Un evento `error` con cualquiera de los mensajes de
+arriba dice `".vitral/plomo"` aunque corra en Windows. La regla 3 dejo de tener
+excepcion de prosa, y esta seccion decia antes lo contrario.
+
+**Lo que no se normaliza es el modo texto, y los tres bloques de arriba son modo
+texto.** Por eso se quedan **exactamente como estan**, con su barra invertida, y
+siguen siendo correctos: estan generados pintando en Windows, que es donde corre
+esto, y se comparan contra `path.join('.vitral', 'plomo')` como ya se dijo. Que
+nadie los "arregle" la proxima vez que lea la regla 3: cambiarlos seria cambiar
+la superficie de texto del CLI, que es contrato con quien lo usa, y ademas
+pondria rojos los checks que los comparan caracter a caracter.
 
 En pantalla, ademas, `".vitral\plomo"` es lo que teclearia quien esta leyendo el
-error en Windows.
+error en Windows. El modo texto tiene delante a una persona sentada en **este**
+sistema; el modo json lo lee un programa que junta datos de donde sea. Los dos
+modos no son el mismo texto con distinta envoltura: `--json` sustituye al texto,
+no convive con el.
 
-**Si alguna vez la interfaz necesita esa ruta como dato, se le da un campo**, no
-una barra. Que nadie "arregle" esto normalizando la prosa: ademas de no servir,
-cambiaria el modo texto, que es contrato con quien usa el CLI.
+**Y en json la cita deja de ser literal.** Estos dos errores **citan lo que la
+persona escribio en su boceto**, asi que un `"plomos": ["retirados\historial.md"]`
+tecleado en Windows produce un evento que dice `retirados/historial.md`: el
+evento **no** repite letra por letra lo que hay en el boceto. Es deliberado y
+esta razonado en `normalizar-rutas-en-json.md`, en "Lo que se pierde, y se
+acepta": en json todo va canonico, incluida la cita, y quien quiera ver lo que se
+tecleo tal cual lo tiene en el modo texto. La alternativa —normalizar unas rutas
+si y las citadas no— exige distinguirlas dentro de una frase en castellano, que
+es justo el analisis que no se puede hacer.
+
+**De `mensaje` sigue sin poder extraerse una ruta**, ni antes ni despues de esto:
+se normaliza para que se **lea** uniforme, no para que se parsee. Si alguna vez
+la interfaz necesita esa ruta como dato, **se le da un campo**, no una barra.
 
 ---
 

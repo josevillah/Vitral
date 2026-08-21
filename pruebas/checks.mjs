@@ -338,6 +338,23 @@ function comprobarBloque(texto, titulo, esperado = BLOQUES[titulo]) {
   return diferencia === null ? null : `(${titulo}) ${diferencia}`;
 }
 
+// La misma cuenta que hace salida.mjs al emitir: convierte el separador de ESTE
+// sistema, no el caracter. En POSIX no cambia nada, que es justo lo que los dos
+// checks de la prosa tienen que afirmar ahi.
+const conBarras = (texto) => texto.split(path.sep).join('/');
+
+// La prosa de un bloque tal como salio del modulo que la redacto, deshaciendo lo
+// unico que le anade salida.mjs al pintarla: el prefijo de la primera linea y la
+// sangria de las de continuacion, que miden lo mismo. Sirve para comparar los dos
+// modos ENTRE SI en vez de escribir a mano el texto esperado del json, que es lo
+// que contrata la tanda de la normalizacion: no un texto concreto, sino la
+// relacion entre las dos formas de decir lo mismo.
+function prosaDe(texto, prefijo = 'vitral: ') {
+  const bloque = bloqueDe(texto, prefijo);
+  if (bloque === null) return null;
+  return bloque.split('\n').map((linea) => linea.slice(prefijo.length)).join('\n');
+}
+
 // Las lineas de stdout ya parseadas, una por evento. Un evento no se compara
 // como cadena: `t` cambia en cada corrida.
 function eventos(stdout) {
@@ -1442,6 +1459,142 @@ const checks = [
       const queja = comprobarBloque(texto, `boceto que no existe · ${caso}`,
         BLOQUE_BOCETO_QUE_NO_ESTA);
       if (queja !== null) return queja;
+    }
+    return null;
+  }],
+
+  // ---------------------------------------------------------------------------
+  // Las rutas de la prosa del modo json
+  // ---------------------------------------------------------------------------
+  //
+  // Los dos se escriben contra path.sep y nunca contra la barra invertida
+  // literal: afirmar la barra seria afirmar el sistema operativo. En Windows
+  // muerden; en POSIX el separador ya es la barra, no hay nada que convertir y
+  // pasan sin comprobar el mordisco. Lo que si se comprueba en las dos
+  // plataformas es la relacion entre los dos modos, que es lo que la tanda
+  // contrata: la misma corrida, dos veces, y el evento tiene que decir lo mismo
+  // que la pantalla con el separador convertido y nada mas.
+  //
+  // Son dos y no uno porque son dos eventos de dos funciones distintas, y un solo
+  // check podria pasar en verde con la mitad del arreglo hecho.
+
+  ['el evento error normaliza las rutas de la prosa, y el modo texto no', () => {
+    // Un plomo pedido bajo un subdirectorio: el mensaje cita lo que se escribio
+    // en el boceto -con separador- y la sugerencia nombra el directorio del
+    // plomo, que sale de un path.join. El archivo se crea de verdad para que el
+    // error sea el del subdirectorio y no el de "no existe".
+    const pedido = path.join('retirados', 'historial.md');
+    const dir = repoConPlomos('json-prosa-error',
+      { ...PLOMOS_DEL_ERROR, [pedido]: '# Un contrato retirado\n' });
+    const boceto = bocetoSuelto(dir, 'prosa-error.json', { nombre: 'prosa', tareas: [
+      { id: 'barra', rutas: ['app/'], plomos: [pedido], prompt: 'x' },
+    ] });
+
+    // La misma corrida dos veces, con y sin la bandera.
+    const texto = vitral(dir, '--seco', '--boceto', boceto);
+    const flujo = vitralCanales(dir, '--seco', '--json', '--boceto', boceto);
+    if (texto.codigo !== 1) return `(texto) esperaba codigo 1, salio ${texto.codigo}`;
+    if (flujo.codigo !== 1) return `(json) esperaba codigo 1, salio ${flujo.codigo}`;
+
+    const evs = eventos(flujo.stdout);
+    if (nombresDe(evs) !== 'error,fin') return `salieron ${nombresDe(evs)}`;
+    const [error] = evs;
+    if (error.sugerencia === null) return 'el error salio sin sugerencia: el escenario no muerde';
+
+    const prosa = prosaDe(texto.texto);
+    if (prosa === null) return '(texto) no salio ningun bloque de error';
+    const diferencia = primeraDiferencia(conBarras(prosa),
+      `${error.mensaje}\n${error.sugerencia}`);
+    if (diferencia !== null) return `el evento no dice lo que la pantalla: ${diferencia}`;
+
+    if (path.sep === '/') return null;
+    if (!prosa.includes(path.sep)) {
+      return '(texto) el escenario ya no lleva el separador del sistema: no comprueba nada';
+    }
+    for (const campo of ['mensaje', 'sugerencia']) {
+      if (error[campo].includes(path.sep)) {
+        return `el evento saco ${campo} con el separador del sistema dentro`;
+      }
+    }
+    return null;
+  }],
+
+  ['el evento veredicto normaliza la prosa, y cada elemento de detalles', () => {
+    // Dos escenarios, porque `detalles` solo lo llena el segundo: un veredicto de
+    // revisarBoceto trae la lista vacia y uno de revisarSolapamientos trae una
+    // linea por choque, con rutas dentro. Dejar `detalles` fuera del arreglo
+    // arreglaria el evento a medias y el primer escenario no lo veria.
+    //
+    // El choque no puede ser el CHOQUE de arriba, y esto es lo unico de este
+    // check que no se ve a simple vista: revisarSolapamientos escribe en cada
+    // detalle la ruta **tal como la declaro el boceto**, no la normalizada -solo
+    // el "ambas bajo ..." del final sale de normalizarRuta-, asi que un boceto
+    // que declare "app/Models/" produce un detalle sin un solo path.sep dentro y
+    // el mordisco no muerde: quitarle el .map(conBarras) a `detalles` dejaria
+    // este check en verde. Se declaran con path.sep, que es ademas como se
+    // teclean en Windows. En POSIX sale la misma cadena que CHOQUE.
+    const choqueConSeparador = { nombre: 'choque', tareas: [
+      { id: 'modelos', rutas: [path.join('app', 'Models') + path.sep], prompt: 'x' },
+      { id: 'pedido', rutas: [path.join('app', 'Models', 'Pedido') + path.sep], prompt: 'y' },
+    ] };
+
+    const escenarios = [
+      // La ruta va en el mensaje tal como se escribio, y aqui se escribe con el
+      // separador de este sistema, que es como se teclea en una terminal.
+      ['boceto fuera de la raiz', path.join('..', 'principal', '.vitral', 'boceto.json'),
+       { conSeparador: true, conDetalles: false }],
+      ['dos tareas que se solapan',
+       bocetoSuelto(trabajo, 'prosa-choque.json', choqueConSeparador),
+       { conSeparador: true, conDetalles: true }],
+    ];
+
+    for (const [caso, boceto, espera] of escenarios) {
+      const texto = vitral(trabajo, '--seco', '--boceto', boceto);
+      const flujo = vitralCanales(trabajo, '--seco', '--json', '--boceto', boceto);
+      if (texto.codigo !== 1) return `(${caso}, texto) esperaba codigo 1, salio ${texto.codigo}`;
+      if (flujo.codigo !== 1) return `(${caso}, json) esperaba codigo 1, salio ${flujo.codigo}`;
+
+      const evs = eventos(flujo.stdout);
+      if (nombresDe(evs) !== 'veredicto,fin') return `(${caso}) salieron ${nombresDe(evs)}`;
+      const [veredicto] = evs;
+      if (veredicto.nivel !== 'aborta') return `(${caso}) el nivel salio "${veredicto.nivel}"`;
+      if (espera.conDetalles === (veredicto.detalles.length === 0)) {
+        return `(${caso}) detalles salio con ${veredicto.detalles.length} elementos`;
+      }
+      if (veredicto.sugerencia === null) return `(${caso}) el veredicto salio sin sugerencia`;
+
+      // El orden al pintar es mensaje, detalles, sugerencia: se rehace igual para
+      // comparar el evento entero con lo que se vio en la pantalla.
+      const prosa = prosaDe(texto.texto);
+      if (prosa === null) return `(${caso}, texto) no salio ningun bloque`;
+      const enJson = [...veredicto.mensaje.split('\n'), ...veredicto.detalles,
+        ...veredicto.sugerencia.split('\n')].join('\n');
+      const diferencia = primeraDiferencia(conBarras(prosa), enJson);
+      if (diferencia !== null) return `(${caso}) el evento no dice lo que la pantalla: ${diferencia}`;
+
+      if (path.sep === '/') continue;
+      if (espera.conSeparador && !prosa.includes(path.sep)) {
+        return `(${caso}, texto) ya no lleva el separador del sistema: no comprueba nada`;
+      }
+      // Y que el separador este donde tiene que estar. Que la prosa entera lo
+      // lleve no basta cuando lo que se comprueba es `detalles`: podria venir del
+      // mensaje y la lista quedarse sin morder. Las lineas pintadas de la lista
+      // son las que van entre el mensaje y la sugerencia, que es el orden en que
+      // las pinta salida.mjs.
+      if (espera.conDetalles) {
+        const desde = veredicto.mensaje.split('\n').length;
+        const pintadas = prosa.split('\n').slice(desde, desde + veredicto.detalles.length);
+        if (!pintadas.some((linea) => linea.includes(path.sep))) {
+          return `(${caso}, texto) ningun detalle lleva el separador: el mordisco no muerde`;
+        }
+      }
+      const campos = [['mensaje', veredicto.mensaje], ['sugerencia', veredicto.sugerencia],
+        ...veredicto.detalles.map((detalle, i) => [`detalles[${i}]`, detalle])];
+      for (const [campo, valor] of campos) {
+        if (valor.includes(path.sep)) {
+          return `(${caso}) el evento saco ${campo} con el separador del sistema dentro`;
+        }
+      }
     }
     return null;
   }],
