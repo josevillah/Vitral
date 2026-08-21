@@ -300,9 +300,31 @@ siguiente vidrio sin contrato.
    decidio: lo que se eligio esta en la tabla del plomo, y la maqueta a partir de aqui
    solo puede envejecer mal. Una maqueta que no coincide con lo implementado sigue
    pareciendo verdad, que es justo lo que la hace peligrosa.
-6. **Decir que queda para la persona:** commitear en `chore/retirar-<tanda>` y
+6. **Comprobar que el cierre se hizo, con un comando y no con la memoria.** Los tres
+   de arriba, en este orden:
+
+   ```
+   ls .vitral/plomo/            -> solo los permanentes y retirados/
+   ls .vitral/                  -> no aparece boceto.json
+   ls -a .vitral/handoffs/      -> solo .tanda
+   ```
+
+7. **Decir que queda para la persona:** commitear en `chore/retirar-<tanda>` y
    mergear. Y si el cierre revelo algo —un pendiente que nadie hizo, un contrato que
    habria que promover a permanente—, decirlo aqui, que es la ultima oportunidad.
+
+### Por que el paso 6 existe
+
+Porque el paso 5 se ha olvidado tres veces, y no por descuido: **de los cuatro
+artefactos del cierre, el handoff es el unico cuyo olvido no deja rastro.** Un plomo
+sin retirar lo canta la cabecera de `--seco`, que dice cuantos archivos de plomo hay y
+cuanto pesan. Un boceto sin borrar se nota en cuanto alguien lanza `node vitral.mjs` a
+secas. Un handoff huerfano no lo dice nadie, y el sello solo lo caza si la tanda
+siguiente reutiliza ese id.
+
+Es la misma regla que gobierna la entrega de una tanda, aplicada a la lista de cierre:
+**la comprobacion tiene que ser positiva y especifica, no "creo que lo hice".** Un `ls`
+que devuelve una linea es una prueba; recordar haber borrado, no.
 
 Lo que **no** se toca en una sesion de cierre: `.vitral/plomo/retirados/LEEME.md`,
 cualquier subsistema con boceto propio como `.vitral/ui/`, y todo lo que este fuera de

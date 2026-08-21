@@ -93,6 +93,34 @@ tanda, como aqui conviven `.vitral/boceto.json` y `.vitral/ui/boceto.json`.
 - **Nada de la interfaz lee `.vitral/`.** Es deliberado y sigue siendolo hasta la
   tanda que lo pida.
 
+### Lo que dejo pendiente la tanda del modo json
+
+Cuatro cosas que salieron de esa tanda, ya entregada, y que no entraban en ella.
+
+**La ayuda no menciona `--json`.** El README la lista en su bloque de Uso y la
+constante `AYUDA` de `src/salida.mjs` no, asi que el programa y su documentacion se
+contradicen. Lo pide el propio `motor.md`: *"anadir una bandera al CLI: `vitral.mjs`
+la parsea y la usa; `salida.mjs` si sale en la ayuda"*. Es una linea.
+
+**La corrida que falla no imprime resumen, y es la que mas lo necesita.**
+`vitral.mjs` hace `if (fallidas.length > 0) { avisoFallo(); return 1; }` y se salta
+`salida.resumen()`. El dato de "fuera de ruta" **si se calcula y si se guarda** —el
+historial de la corrida `20260820-230341` guarda
+`["pruebas/.bloques.txt","pruebas/.chunks.js"]`— pero no se ensena. Solo aparece
+haciendo `--historial <id>`, que es justo lo que nadie hace despues de un fallo.
+
+**`motor.md` paso de 27,4 KB a 41,4 KB** al absorber el catalogo de eventos. Es
+contrato permanente: esos 14 KB los paga cada vidrio de cada tanda futura, en cada
+turno, como contexto releido. Vale la pena mirar si se pueden apretar sin perder
+contrato.
+
+**El catalogo de eventos no lo ve quien mas lo necesita.** Su origen unico es
+`.vitral/plomo/motor.md`, pero las tandas de la interfaz leen su plomo de
+`.vitral/ui/plomo/` —el directorio sale de `path.dirname(rutaBoceto)`— y no ven
+`motor.md` jamas. No se arregla duplicandolo: un catalogo en dos sitios diverge. Hay
+que decidirlo cuando se planifique la primera tanda de interfaz que consuma el flujo,
+con el caso delante.
+
 ### Un borde que hoy es un fallo latente
 
 `--boceto` puede apuntar a un boceto de **otro** proyecto, y el motor lo ejecuta contra
