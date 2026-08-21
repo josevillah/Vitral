@@ -116,19 +116,113 @@ contrato.
 que decidirlo cuando se planifique la primera tanda de interfaz que consuma el flujo,
 con el caso delante.
 
-### El contrato de la interfaz pide partirse, y esto es lo que cuesta hoy
+### El contrato de la interfaz no se parte: decidido el 21-08-2026, con la medida delante
 
-**Decision de contenido, no de aseo, y merece su propia sesion.** Se deja apuntada con
-las cifras del 21-08-2026 para que se decida con datos y no con la sensacion de que el
-archivo es largo.
+**Cerrado.** Esto estuvo abierto como "decision de contenido pendiente" y ya no lo esta.
+Se deja escrito con los numeros para que **no se reabra por intuicion**, que es
+exactamente como se iba a reabrir: `panel-pty.md` son 79 KB y parece obvio que partirlo
+ahorra mucho. No lo es.
 
-`.vitral/ui/plomo/panel-pty.md` describe ya **seis superficies distintas** —el panel
-PTY, la cuadricula, los proyectos, la paleta, la densidad y el modo corrida— y **cada
-tarea lo recibe entero aunque toque una esquina**. Tras cerrar la tanda del modo
-corrida y subirle lo que sobreviva, llega a unos **91 KB**, y el prompt de cada vidrio
-a unos **100 KB**.
+**Lo que si hay que hacer siempre, desde ya: declarar `plomos` en todas las tandas de
+interfaz.** Eso no es opcional ni "cuando se acuerde alguien". Es de donde sale casi
+todo el ahorro disponible, y no cuesta nada.
 
-Lo que eso cuesta, en dos cifras que **no son la misma** y conviene no mezclar:
+#### La decision
+
+`.vitral/ui/plomo/` se queda en **dos archivos**: `panel-pty.md` (79.135 B) y
+`corrida.md` (25.093 B), los dos permanentes. No se parte en cinco ni en siete.
+
+#### Los datos que la sostienen
+
+**Medido sobre las siete tandas de interfaz que existieron**, cada una contra el
+contrato **como era entonces**, no contra el de hoy:
+
+| Tanda | Vidrios | Contrato entonces | Ahorraria partiendo |
+|---|---|---|---|
+| PTY | 1 | 21.748 B | **0,0%** |
+| panel:fin | 1 | 27.104 B | 34,4% |
+| cuadricula | 1 | 35.710 B | 35,8% |
+| proyectos | 3 | 52.704 B | 17,8% |
+| paleta | 1 | 62.720 B | 36,4% |
+| densidad | 3 | 75.588 B | 23,6% |
+| modo corrida | 4 | 104.209 B | 29,8% |
+| **Total** | **14** | | **26,4%** |
+
+**El reparto nucleo/separable.** Dentro de `panel-pty.md`, el nucleo que lee todo el
+mundo —cabecera, "Que es esto", el catalogo IPC, "El camino de los datos", "Que no se
+toca", "Lo que no entra", "Los bordes" y "Como se comprueba"— son 24.742 B contra
+54.373 B de capas separables: **31 / 69**. Contando `corrida.md`, que toda tarea de una
+tanda de esa superficie carga entera, lo fijo contra lo que varia es **48 / 52**.
+
+Ese 48 es el techo: **casi la mitad del contrato la lee todo el mundo hiciera lo que
+hiciera el corte.**
+
+**El tamano real de una tanda de interfaz.** Catorce vidrios en siete tandas: 1, 1, 1,
+3, 1, 3 y 4. Descontando las revisiones, **de una a tres tareas de codigo, nunca cuatro
+ni cinco**. La mediana es **un vidrio**. Todo el razonamiento sobre repartir contratos
+entre agentes paralelos es, empiricamente, sobre tandas de una a tres tareas.
+
+**Declarar `plomos` ya captura la mayor parte del ahorro, sin tocar un archivo.** Con
+los dos archivos que ya existen, una tarea que no pinte vidrios declara
+`["panel-pty.md"]` y se ahorra `corrida.md` entero:
+
+| Forma de tanda futura | Solo declarando `plomos` | Ademas partiendo | Lo que ya captura `plomos` |
+|---|---|---|---|
+| No toca la superficie corrida (3 vidrios) | 24,1% | 33,6% | **72%** |
+| La toca (4 vidrios) | 19,0% | 29,8% | **64%** |
+
+Partir compra **entre 9,5 y 10,8 puntos adicionales**. En dinero, con la cifra de
+$0.0137 por KB de prompt y por tarea que esta abajo: **entre $0.40 y $0.60 por tanda**.
+
+Y aplicado hacia atras no compraba nada: **seis de las siete tandas habrian ahorrado
+exactamente 0% declarando `plomos`, porque en `plomo/` habia un solo archivo.** El campo
+reparte piezas; con una sola pieza no hay nada que repartir. `corrida.md` es la primera
+segunda pieza que ha existido.
+
+#### Dos cosas que la media esconde, y conviene no redescubrir
+
+**La tanda del PTY ahorra 0% y no es un fallo del corte.** Su unico vidrio declaraba
+`ui/` entera y escribia el subsistema completo: leia todo porque necesitaba todo.
+Cuando la tanda **es** la superficie, no hay nada que quitar. Volvera a pasar la proxima
+vez que se abra una superficie nueva.
+
+**Las tandas de un vidrio ahorran mas (34-36%) que las de tres o cuatro (18-30%).**
+Contraintuitivo y directo: una tarea estrecha suelta todo lo demas, mientras que una
+tanda grande abarca mas superficies y arrastra una revision que lee entero. La particion
+paga mejor donde menos falta hace.
+
+#### Que reabriria esto
+
+Las dos cosas **a la vez**, no una:
+
+1. Una tanda de interfaz con **cuatro o cinco vidrios**, y
+2. el contrato de `.vitral/ui/plomo/` **por encima de 120 KB**.
+
+Con las dos, se vuelve a medir con el metodo de arriba: trocear por secciones,
+repartir contra las rutas reales de las tareas, y comparar contra lo que ya da
+`plomos` sin partir.
+
+**Ojo con la primera:** el modo corrida ya tuvo cuatro vidrios, asi que esa mitad ya
+ocurrio una vez. **El disparador real es el tamano.** Hoy son 104 KB; faltan 16.
+
+Y si alguna vez se parte, esto es lo que costaria, ya averiguado: `corrida.md` cita
+`panel-pty.md` **por nombre de archivo en cuatro sitios** —la paleta, la prohibicion de
+etiquetas, el proceso huerfano y la primacia—, pero las cuatro **traen el hecho
+entrecomillado consigo**, asi que solo hay que cambiarles el nombre del archivo. Los que
+si hacen dano son **cuatro punteros que no traen el hecho**: "la seccion de la senal
+dice por que" (L1376), "ver la nota del teclado" (L1467 y L1473) y "'El cwd de un panel
+es del panel', mas abajo" (L399). Dos de ellos van del nucleo hacia una capa, que es la
+direccion equivocada. Los cuatro se arreglan subiendo el hecho al nucleo, y en los
+cuatro cabe en una frase.
+
+Y una que **no** hay que hacer aunque parezca limpia: sacar la paleta Pergamino a su
+propio archivo. En las cinco tandas que la necesitaron, `paleta` y `frontend` viajaron
+**siempre juntos, en las dos direcciones**. Ninguna tarea necesito nunca una sin la
+otra. Eso no son dos piezas: es una seccion de otra, y separarlas no ahorra un byte.
+
+#### El modelo de coste, que sigue valiendo
+
+Dos cifras que **no son la misma** y conviene no mezclar:
 
 | Que | Cuanto |
 |---|---|
@@ -138,64 +232,9 @@ Lo que eso cuesta, en dos cifras que **no son la misma** y conviene no mezclar:
 La segunda sale de medir, no de estimar: sumando `cacheCreationInputTokens` de las
 cinco tareas de la tanda de los eventos —plomo de 53.5 KB, prompt de 58 KB— dan
 **396.824 tokens**, o sea **$3.97**, que son **$0.0137 por KB de prompt y por tarea**.
-Proyectado a 100 KB y cuatro vidrios: $5.47.
 
-**Y no se arregla retirando nada, porque no queda nada que retirar.** En
-`.vitral/ui/plomo/` el unico permanente es `panel-pty.md`; el plomo de cada tanda ya se
-retira al cerrar. El coste no viene de acumular basura: viene de que **un contrato
-permanente crecio hasta cubrir seis superficies** y el motor no sabe dar media.
-
-**El motor ya sabe dar media, desde la tanda de `plomos`.** Lo de arriba se escribio
-cuando partirlo en varios archivos del mismo directorio no servia, porque `leerPlomo`
-los concatenaba todos igual. Eso dejo de ser cierto: una tarea declara en el boceto
-que archivos lee, y omitir el campo sigue significando todos. Ya no hacen falta
-subsistemas con boceto propio por superficie. **Lo que queda es la decision de
-contenido: por donde se corta `panel-pty.md`.** Sigue sin tomarse de rebote a mitad de
-otra tanda.
-
-#### Cuanto ahorra la particion de verdad: 34%, no 60%
-
-Medido el 21-08-2026 sobre `.vitral/ui/boceto.json` tal como esta, troceando
-`panel-pty.md` por sus secciones reales y repartiendolas entre sus cuatro tareas segun
-lo que cada prompt dice ya que necesita:
-
-| Tarea | Recibe hoy | Recibiria | Ahorro |
-|---|---|---|---|
-| `rust-corrida` | 104.228 B | 56.540 B | 46% |
-| `flujo` | 104.228 B | 41.917 B | 60% |
-| `barra` | 104.228 B | 73.763 B | 29% |
-| `revision` | 104.228 B | 104.208 B | **0%** |
-| **La tanda entera** | **416.912 B** | **276.428 B** | **33,7%** |
-
-**Quien vaya a partirlo necesita saber esto antes de empezar**, porque la intuicion
-dice el doble y luego el resultado decepciona. El suelo tiene dos causas, y ninguna se
-arregla cortando mejor:
-
-- **`corrida.md` son 25.093 B que viajan igual a las cuatro tareas.** Es el contrato de
-  la tanda en curso: nadie puede no leerlo. El 24% del total es irreducible por
-  construccion.
-- **La tarea de revision paga el precio entero, y hace bien.** Revisar la tanda contra
-  el contrato es leer el contrato entero. Un cuarto de la tanda no ahorra nada.
-
-Lo separable de verdad son unos 33 KB de `panel-pty.md` en bloques que se mueven sin
-tocar contenido —proyectos, ConPTY y ciclo de vida, la senal de actividad, el uso de la
-maquina, la barra densa, la configuracion de Tauri, la disposicion de archivos—, mas la
-paleta Pergamino, que son 4.703 B **hoy enterrados dentro de `### Como se ve la barra
-lateral`** y que `corrida.md` ya cita desde fuera por nombre de archivo. Sacar la paleta
-a su propio archivo es la mejora mas limpia del lote y no depende de las demas.
-
-Lo que **no** se separa moviendo bloques: "Los bordes" (4.860 B) es una sola tabla de 38
-filas que mezcla PTY, proyectos, teclado y muestreo de CPU, y "Como se comprueba"
-(7.918 B) es una sola lista numerada que atraviesa todas las superficies. Se reparten
-fila a fila o no se reparten.
-
-Y un coste que no se ve hasta que se paga: `corrida.md` cita `panel-pty.md` **por nombre
-de archivo en cuatro sitios** —la paleta, la prohibicion de etiquetas, el proceso
-huerfano y la primacia— y dentro de `panel-pty.md` hay cinco referencias del tipo "mas
-arriba" y "la seccion de la senal dice por que" que dejan de significar nada en cuanto
-haya varios archivos. Ninguna revienta: solo apuntan a un sitio donde ya no esta lo
-citado.
-
+Es la cifra con la que se convierte cualquier ahorro de KB en dolares, aqui y en
+cualquier otra decision de plomo.
 ### Un borde que hoy es un fallo latente
 
 `--boceto` puede apuntar a un boceto de **otro** proyecto, y el motor lo ejecuta contra

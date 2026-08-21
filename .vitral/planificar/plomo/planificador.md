@@ -200,6 +200,50 @@ Reglas del reparto, todas comprobables:
   declarar los mismos archivos que revisa, porque corre despues.
 - **Las olas salen solas.** No se declaran: `calcularOlas` las deduce de
   `necesita` por orden topologico. Cada nivel es una ola.
+- **Cada tarea declara `plomos`** en cuanto el directorio del plomo tenga mas de
+  una pieza. Omitirlo significa "todos" y sigue siendo valido; declararlo es decir
+  cual se lee. **En las tandas de interfaz es obligatorio**, y abajo esta por que.
+
+#### `plomos`: cuando paga y cuando no
+
+La regla vale en general —que una tarea declare que contratos lee es bueno siempre,
+aunque no ahorre— pero **lo que ahorra depende de si el directorio tiene piezas o
+tiene una sola cosa gorda**, y las dos lineas de este repositorio caen en lados
+distintos. Conviene saberlo antes de contarlo como un ahorro que no llega.
+
+**En la interfaz: obligatorio, y captura el 72%.** `.vitral/ui/plomo/` tiene **dos
+contratos permanentes** —`panel-pty.md`, 79 KB, y `corrida.md`, 25 KB— y casi
+ninguna tarea necesita los dos. Una tarea que no pinta vidrios declara
+`["panel-pty.md"]` y se ahorra 25 KB, que son **24,1% de su prompt**. Medido sobre
+las siete tandas de interfaz que existieron: eso es el **72% de todo lo que se
+podria ahorrar** incluso partiendo `panel-pty.md` en cinco archivos.
+
+De ahi salio la regla. Se midio el 21-08-2026 al decidir si se partia el contrato
+de la interfaz, y **se decidio que no**: partir compraba solo 9,5 puntos mas, unos
+$0.40 por tanda. Declarar `plomos` da casi todo el beneficio sin mover un archivo.
+El registro entero, con la condicion que reabriria la decision, esta en
+`.vitral/rumbo.md`.
+
+**En el motor: declaralo igual, pero no cuentes con que ahorre.** `.vitral/plomo/`
+tiene en marcha exactamente dos archivos —`motor.md`, 52 KB, y el plomo de la tanda
+en curso— y **toda tarea necesita los dos**: `motor.md` porque es el contrato
+permanente, y el plomo de la tanda porque es lo que la gobierna. No hay nada que
+soltar. `motor.md` es indivisible por naturaleza: no cubre seis superficies como
+`panel-pty.md`, cubre un motor, y sus invariantes las lee quien toca cualquier
+modulo.
+
+**Y hay una trampa que ya paso.** La tanda de la normalizacion midio un 9,4% de
+ahorro declarando `plomos`, y todo venia de que una tarea solto
+`plomos-en-el-boceto.md`, el plomo de la tanda **anterior**, que seguia en el
+directorio sin haberse retirado. Ese ahorro no era un beneficio del campo: era el
+sintoma de un cierre que faltaba. **Si `plomos` empieza a ahorrar mucho en una
+tanda de motor, la pregunta correcta no es "que bien" sino "¿que hace ese archivo
+todavia ahi?".**
+
+La regla general, entonces: **`plomos` reparte piezas.** Donde hay piezas —varias
+superficies, varios contratos permanentes— paga. Donde hay una sola cosa
+indivisible, se declara igual, por higiene y para que el prompt diga la verdad
+sobre lo que la tarea lee, pero el ahorro es cero y no hay que prometerlo.
 
 ### 3. Como se ve
 
@@ -857,9 +901,16 @@ En cada tarea:
 | `presupuesto` | no | Numero mayor que cero, en dolares. Solo lo respeta `claude` |
 | `modelo` | no | Cadena no vacia y sin espacios. Alias o nombre. Para `opencode`, `proveedor/modelo` |
 | `cwd` | no | Ruta relativa no vacia. Directorio de la tarea. Las rutas se resuelven contra el |
+| `plomos` | no | Array de nombres de archivo del directorio del plomo, **sin subdirectorios** y sin repetidos. Cada nombre tiene que existir ahi o la corrida aborta. Omitido = **todos**; `[]` = **ninguno** |
 
-Los tres ultimos se validan solo si vienen, y ojo con `null`: omitido y `null` no
-son lo mismo, y `null` es invalido en los tres.
+Los cuatro ultimos se validan solo si vienen, y ojo con `null`: omitido y `null` no
+son lo mismo, y `null` es invalido en los cuatro.
+
+`plomos` tiene ademas una distincion que los otros tres no tienen: **omitido y `[]`
+son los dos validos y significan cosas opuestas** —"todos" y "ninguno"—, porque no
+hay otra forma de decir "ninguno". Un nombre con `/` o `\` aborta con un error
+propio: el directorio del plomo es plano, y lo que cuelga de un subdirectorio no
+entra en ningun prompt. Es lo que hace que `retirados/` funcione.
 
 Lo que se comprueba es la forma, no el significado. `modelo: "opus"` en una tarea
 `opencode` pasa el validador —es una cadena sin espacios— y lo rechaza el CLI ya
@@ -1257,6 +1308,8 @@ gastar menos, y no son intercambiables. Es otra tanda, y su plomo empieza aqui.
 | Proponer paletas sin preguntar antes si ya hay direccion | Nadie lo detecta, y el coste lo paga la persona teniendo que frenar al planificador. Es la primera pregunta de la fase 3 |
 | Proponer colores sin mirar los que ya son contrato | Nadie lo detecta. Si hay superficie entregada, sus valores son la restriccion de entrada y se dicen antes de que la persona elija |
 | Un plomo de una tanda vieja que sigue en `.vitral/plomo/` | La cabecera de `--seco` dice cuantos archivos de plomo hay y cuanto pesan |
+| Un boceto de interfaz sin `plomos` en sus tareas | Nadie lo detecta: la corrida sale bien y cada vidrio carga los 104 KB de las dos superficies. Se ve en `--seco`, comparando el `bytes` de cada prompt con lo que esa tarea de verdad lee |
+| `plomos` que ahorra mucho en una tanda de motor | Nadie lo detecta, y **parece una buena noticia**. Casi siempre significa que hay un plomo de otra tanda sin retirar: mirar `.vitral/plomo/` antes de celebrarlo |
 | Un boceto ya ejecutado que sigue en `.vitral/boceto.json` | Nadie lo detecta. `node vitral.mjs` sin banderas lo relanza tal cual, y si su plomo ya se movio, los agentes corren sin contrato y el prompt no lo dice |
 | Un handoff viejo de un id que se repite entre tandas | Nadie lo detecta. `--solo` se salta las dependencias que tienen handoff en disco sin mirar de que tanda son, e inyecta el contenido viejo en el prompt del dependiente |
 | El mismo dato explicado en dos prompts | Nadie lo detecta. Buscar el dato repetido: si esta en dos prompts, es plomo |
