@@ -81,6 +81,15 @@ const FRASE_RUTAS = (companeros) => (companeros.length > 0
   : `Nadie mas esta escribiendo ahora mismo, pero las rutas no son una sugerencia: son
 el reparto que decidio quien planifico la tanda.`);
 
+// El bloque del plomo se queda sin contenido por dos motivos distintos, y decirlos
+// igual seria mentir: quien lea "no hay contratos declarados" cuando la verdad es
+// que su tarea declaro no leer ninguno se pone a buscar un contrato que nadie
+// escribio. La comprobacion es sobre `tarea.plomos`, no sobre la cadena: el campo
+// omitido en un repositorio sin plomo y el `[]` producen los dos la cadena vacia.
+const RESPALDO_PLOMO = (tarea) => (tarea.plomos !== undefined && tarea.plomos.length === 0
+  ? '(esta tarea declara que no lee ningun contrato)'
+  : '(no hay contratos declarados: no existe el directorio plomo/ o esta vacio)');
+
 // `companeros` son los ids de las OTRAS tareas de la misma ola, sin la propia. El
 // valor por defecto es el texto verdadero de una llamada suelta: un llamador que
 // lo olvide dice "estas solo", que nunca inventa companeros.
@@ -110,7 +119,7 @@ que esta mal es tu codigo.
 Programa contra el plomo aunque la pieza que tiene que encajar con la tuya todavia
 no exista.
 
-${plomo || '(no hay contratos declarados: no existe el directorio plomo/ o esta vacio)'}`);
+${plomo || RESPALDO_PLOMO(tarea)}`);
 
   bloques.push(
 `## Tu tarea

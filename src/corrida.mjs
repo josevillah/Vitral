@@ -19,6 +19,7 @@ import { ejecutarVidrio } from './proceso.mjs';
 import {
   borrarMarcaIncompleta, escribirMarcaIncompleta, guardarHandoff, guardarLog,
 } from './registro.mjs';
+import { plomoDe } from './boceto.mjs';
 
 // Cada cuanto decir que las tareas en curso siguen vivas.
 const LATIDO_MS = 60_000;
@@ -31,7 +32,7 @@ const companerosDe = (tarea, ola) => ola.filter((t) => t.id !== tarea.id).map((t
 const promptDe = (tarea, plan, ola) =>
   construirPrompt(
     tarea,
-    plan.plomo.texto,
+    plomoDe(tarea, plan.plomo),
     handoffsDe(tarea, plan.handoffs, plan.incompletos),
     companerosDe(tarea, ola),
   );

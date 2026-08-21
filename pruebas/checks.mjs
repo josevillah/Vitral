@@ -170,6 +170,55 @@ function montarSobrescritura(nombre, ids) {
   return { dir, boceto };
 }
 
+// El escenario de los checks del campo "plomos". El directorio de plomo que
+// monta montarRepo viene copiado de ejemplo/plomo/ y tiene un solo .md: escribir
+// un segundo dentro de un repositorio compartido cambiaria lo que ven checks que
+// hoy pasan, asi que cada check del campo monta el suyo, con nombre propio, y se
+// queda exactamente con los archivos que declara aqui y con ninguno mas.
+//
+// Las claves de `archivos` son rutas dentro del directorio del plomo, asi que
+// una con separador crea el subdirectorio de verdad: es lo que necesita el check
+// del plomo pedido bajo una carpeta, que sin el archivo escrito pasaria tambien
+// con el orden de comprobaciones invertido. Un objeto vacio deja el repositorio
+// sin directorio plomo/ ninguno.
+function repoConPlomos(nombre, archivos) {
+  const dir = montarRepo(nombre, 'trabajo/checks');
+  const dirPlomo = path.join(dir, '.vitral', 'plomo');
+  rmSync(dirPlomo, { recursive: true, force: true });
+  for (const [ruta, contenido] of Object.entries(archivos)) {
+    const destino = path.join(dirPlomo, ruta);
+    mkdirSync(path.dirname(destino), { recursive: true });
+    writeFileSync(destino, contenido);
+  }
+  return dir;
+}
+
+// Dos contratos con una marca propia dentro, para poder afirmar cual entro en un
+// prompt y cual no. Los nombres son de una letra porque en este asunto lo unico
+// que importa de ellos es en que orden salen.
+const MARCAS = {
+  'a.md': 'la marca del primer contrato',
+  'b.md': 'la marca del segundo contrato',
+};
+
+const PLOMOS_AB = {
+  'a.md': `# Contrato A\n\n${MARCAS['a.md']}\n`,
+  'b.md': `# Contrato B\n\n${MARCAS['b.md']}\n`,
+};
+
+// El escenario de los dos errores. Los archivos se llaman como los de este
+// repositorio para que la linea de los disponibles salga literal del plomo.
+const PLOMOS_DEL_ERROR = {
+  'motor.md': '# Contrato del motor\n\nlo que hay que dar por cierto de los demas\n',
+  'plomos-en-el-boceto.md': '# Contrato · que cada tarea declare que plomos lee\n\nel de la tanda\n',
+};
+
+// Un plomo entro en un prompt cuando estan las dos mitades: la linea que lo
+// encabeza y su contenido. Comprobar solo el encabezado no distingue "lo mando
+// entero" de "lo mando vacio".
+const llevaPlomo = (prompt, nombre) =>
+  prompt.includes(`--- plomo: ${nombre} ---`) && prompt.includes(MARCAS[nombre]);
+
 // ---------------------------------------------------------------------------
 // Los bloques literales
 // ---------------------------------------------------------------------------
@@ -303,6 +352,45 @@ function eventos(stdout) {
 }
 
 const nombresDe = (evs) => evs.map((evento) => evento.evt).join(',');
+
+// Los dos errores del campo "plomos", copiados caracter a caracter de la seccion
+// "Los textos, literales" de .vitral/plomo/plomos-en-el-boceto.md. No se generan
+// corriendo el motor, por lo mismo que los diecisiete de arriba: el motor de hoy
+// ya lleva la tanda, asi que fotografiarlo congelaria como correcta cualquier
+// coma que se hubiera movido.
+//
+// Con una sola sustitucion, y es la unica: el directorio del plomo se pinta tal
+// cual lo trae `plomo.dir`, sin normalizar barras, y `plomo.dir` sale de un
+// path.join. En el ejemplo del plomo se lee ".vitral/plomo" porque se genero en
+// una maquina donde path.join da barras hacia delante; en Windows la misma linea
+// dice ".vitral\plomo". Afirmar la barra literal seria afirmar el sistema
+// operativo de quien lo escribio, asi que va la cuenta y no la barra.
+const DIR_PLOMO = path.join('.vitral', 'plomo');
+
+// Los dos .md del escenario de los dos errores se llaman como los de este
+// repositorio para que la ultima linea salga tambien literal del plomo.
+const BLOQUE_PLOMO_FANTASMA =
+  `vitral: la tarea "barra" pide el plomo "paleta.md", que no existe en "${DIR_PLOMO}".\n` +
+  '        plomos disponibles: motor.md, plomos-en-el-boceto.md';
+
+// El del subdirectorio tiene que explicar el motivo entero y no solo que la ruta
+// no vale, y por eso mide cuatro lineas de sugerencia en vez de una. El nombre
+// pedido cambia con la barra que se escriba; lo demas, no.
+const bloqueDeSubdirectorio = (pedido) =>
+  `vitral: la tarea "barra" pide el plomo "${pedido}", y "plomos" no baja a subdirectorios.\n` +
+  `        solo entran en el prompt los .md que hay sueltos en "${DIR_PLOMO}".\n` +
+  '        Un subdirectorio es donde se deja un contrato para que deje de gobernar:\n' +
+  '        lo que cuelga de uno no lo lee ningun agente, y por eso no se puede pedir.\n' +
+  '        plomos disponibles: motor.md, plomos-en-el-boceto.md';
+
+// Y el del boceto que no existe, que no es de esta tanda: es el de siempre, y
+// esta aqui porque leerPlomo pasa a correr antes que leerBoceto y este es el
+// mensaje que se perderia si esa inversion rompiera algo.
+const BOCETO_QUE_NO_ESTA = path.join('.vitral', 'no-esta.json');
+
+const BLOQUE_BOCETO_QUE_NO_ESTA =
+  `vitral: no encuentro el boceto en "${BOCETO_QUE_NO_ESTA}".\n` +
+  '        crea .vitral/boceto.json o pasa otro con --boceto <archivo>';
 
 // ---------------------------------------------------------------------------
 // Los checks
@@ -1141,6 +1229,219 @@ const checks = [
       if (texto.codigo !== flujo.codigo) {
         return `(${args.join(' ')}) sin --json salio ${texto.codigo} y con --json ${flujo.codigo}`;
       }
+    }
+    return null;
+  }],
+  // Los nueve que siguen son del campo "plomos", con el que una tarea declara
+  // que contratos del directorio lee. Todos con --seco, como los de arriba: el
+  // reparto del plomo se ve entero en el prompt que imprime el ensayo, sin
+  // lanzar ningun agente.
+  //
+  // Cada uno monta su repositorio con repoConPlomos, que le deja el directorio
+  // de plomo con los archivos que declara y con ninguno mas.
+
+  ['omitir "plomos" da el prompt de siempre', () => {
+    // La regla que sostiene todo lo demas: un boceto que no conoce el campo
+    // recibe lo que recibia antes de que el campo existiera.
+    const dir = repoConPlomos('plomos-todos', PLOMOS_AB);
+    const boceto = bocetoSuelto(dir, 'todos.json', { nombre: 'plomos todos', tareas: [
+      { id: 'una', rutas: ['app/una/'], prompt: 'x' },
+      { id: 'otra', rutas: ['app/otra/'], prompt: 'y' },
+    ] });
+    const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}`;
+    for (const id of ['una', 'otra']) {
+      const prompt = promptDe(texto, id);
+      if (prompt === null) return `no salio el prompt de ${id}`;
+      for (const nombre of ['a.md', 'b.md']) {
+        if (!llevaPlomo(prompt, nombre)) return `el prompt de ${id} no lleva ${nombre}`;
+      }
+    }
+    return null;
+  }],
+
+  ['declarar un plomo manda ese y no el otro', () => {
+    const dir = repoConPlomos('plomos-uno', PLOMOS_AB);
+    const boceto = bocetoSuelto(dir, 'uno.json', { nombre: 'plomos uno', tareas: [
+      { id: 'declara', rutas: ['app/declara/'], plomos: ['a.md'], prompt: 'x' },
+      { id: 'omite', rutas: ['app/omite/'], prompt: 'y' },
+    ] });
+    const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}`;
+
+    const declara = promptDe(texto, 'declara');
+    if (declara === null) return 'no salio el prompt de declara';
+    if (!llevaPlomo(declara, 'a.md')) return 'declara pidio a.md y no lo recibio';
+    if (declara.includes('b.md') || declara.includes(MARCAS['b.md'])) {
+      return 'declara no pidio b.md y le llego igual';
+    }
+
+    // Y la de al lado, sin el campo, sigue recibiendolos todos: el reparto es por
+    // tarea, no por corrida.
+    const omite = promptDe(texto, 'omite');
+    if (omite === null) return 'no salio el prompt de omite';
+    for (const nombre of ['a.md', 'b.md']) {
+      if (!llevaPlomo(omite, nombre)) return `omite no declara nada y no lleva ${nombre}`;
+    }
+    return null;
+  }],
+
+  ['el orden de los plomos es el declarado, no el alfabetico', () => {
+    const dir = repoConPlomos('plomos-orden', PLOMOS_AB);
+    const boceto = bocetoSuelto(dir, 'orden.json', { nombre: 'plomos orden', tareas: [
+      { id: 'alreves', rutas: ['app/alreves/'], plomos: ['b.md', 'a.md'], prompt: 'x' },
+      { id: 'omite', rutas: ['app/omite/'], prompt: 'y' },
+    ] });
+    const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}`;
+
+    const alreves = promptDe(texto, 'alreves');
+    if (alreves === null) return 'no salio el prompt de alreves';
+    const b = alreves.indexOf('--- plomo: b.md ---');
+    const a = alreves.indexOf('--- plomo: a.md ---');
+    if (b === -1 || a === -1) return 'alreves no recibio los dos plomos';
+    if (b > a) return 'declaro ["b.md","a.md"] y le llegaron en orden alfabetico';
+
+    // Sin el campo no hay mas orden que el del directorio, y ese sigue siendo el
+    // alfabetico: las dos formas se leen distinto a proposito.
+    const omite = promptDe(texto, 'omite');
+    if (omite === null) return 'no salio el prompt de omite';
+    if (omite.indexOf('--- plomo: a.md ---') > omite.indexOf('--- plomo: b.md ---')) {
+      return 'sin declarar nada, los plomos dejaron de venir en orden alfabetico';
+    }
+    return null;
+  }],
+
+  ['"plomos": [] no manda ninguno, y el prompt lo dice con su frase', () => {
+    // El array vacio y el campo ausente son distinguibles y significan cosas
+    // distintas: "no leo ninguno" es una decision de quien planifico, y el
+    // respaldo de siempre -"no hay contratos declarados"- diria otra cosa.
+    const dir = repoConPlomos('plomos-vacio', PLOMOS_AB);
+    const boceto = bocetoSuelto(dir, 'vacio.json', { nombre: 'plomos vacio', tareas: [
+      { id: 'ninguno', rutas: ['app/'], plomos: [], prompt: 'x' },
+    ] });
+    const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}`;
+    const prompt = promptDe(texto, 'ninguno');
+    if (prompt === null) return 'no salio el prompt de ninguno';
+    if (!prompt.includes('(esta tarea declara que no lee ningun contrato)')) {
+      return 'declaro [] y su prompt no lo dice con la frase del plomo';
+    }
+    if (prompt.includes('(no hay contratos declarados')) {
+      return 'declaro [] y le salio el respaldo de "no habia nada que dar"';
+    }
+    for (const nombre of ['a.md', 'b.md']) {
+      if (prompt.includes(nombre) || prompt.includes(MARCAS[nombre])) {
+        return `declaro [] y le llego ${nombre} igual`;
+      }
+    }
+    return null;
+  }],
+
+  ['un plomo que no existe aborta, y el mensaje sale palabra por palabra', () => {
+    const dir = repoConPlomos('plomos-fantasma', PLOMOS_DEL_ERROR);
+    const boceto = bocetoSuelto(dir, 'fantasma.json', { nombre: 'plomos fantasma', tareas: [
+      { id: 'barra', rutas: ['app/'], plomos: ['paleta.md'], prompt: 'x' },
+    ] });
+    const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+    if (codigo !== 1) return `esperaba codigo 1, salio ${codigo}`;
+    return comprobarBloque(texto, 'plomos · no existe', BLOQUE_PLOMO_FANTASMA);
+  }],
+
+  ['un plomo bajo un subdirectorio aborta con SU mensaje, no con el de "no existe"', () => {
+    // El archivo se crea de verdad dentro del subdirectorio, y ese es el check
+    // entero: si no estuviera, este escenario pasaria tambien con las dos
+    // comprobaciones invertidas, que es justo el fallo que tiene que cazar. Lo
+    // que se afirma no es que la ruta no valga -no vale de las dos maneras-, es
+    // que no se puede pedir aunque el archivo este ahi.
+    const dir = repoConPlomos('plomos-subdirectorio', {
+      ...PLOMOS_DEL_ERROR,
+      'retirados/historial.md': '# Un contrato retirado\n\nya no gobierna nada\n',
+    });
+    const puesto = path.join(dir, '.vitral', 'plomo', 'retirados', 'historial.md');
+    if (!existsSync(puesto)) return 'el escenario no llego a escribir el archivo del subdirectorio';
+
+    // Las dos barras: la de siempre y la que escribiria alguien en Windows.
+    const pedidos = ['retirados/historial.md', 'retirados\\historial.md'];
+    for (const [indice, pedido] of pedidos.entries()) {
+      const boceto = bocetoSuelto(dir, `subdirectorio-${indice}.json`, {
+        nombre: 'plomos subdirectorio', tareas: [
+          { id: 'barra', rutas: ['app/'], plomos: [pedido], prompt: 'x' },
+        ] });
+      const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+      const visto = JSON.stringify(pedido);
+      if (codigo !== 1) return `(${visto}) esperaba codigo 1, salio ${codigo}`;
+      const queja = comprobarBloque(texto, `plomos · subdirectorio ${visto}`,
+        bloqueDeSubdirectorio(pedido));
+      if (queja !== null) return queja;
+    }
+    return null;
+  }],
+
+  ['un "plomos" mal escrito aborta', () => {
+    // La forma se juzga mirando el valor: null no es lo mismo que omitido, una
+    // cadena suelta no se itera letra a letra, y un nombre repetido es el mismo
+    // criterio que un id repetido.
+    const dir = repoConPlomos('plomos-forma', PLOMOS_AB);
+    const casos = [null, 'a.md', [123], [''], ['a.md', 'a.md']];
+    for (const [indice, valor] of casos.entries()) {
+      const boceto = bocetoSuelto(dir, `forma-${indice}.json`, { nombre: 'plomos forma', tareas: [
+        { id: 'barra', rutas: ['app/'], plomos: valor, prompt: 'x' },
+      ] });
+      const { codigo, texto } = vitral(dir, '--seco', '--boceto', boceto);
+      const visto = JSON.stringify(valor);
+      if (codigo !== 1) return `(${visto}) esperaba codigo 1, salio ${codigo}`;
+      // El texto de estos cinco no lo fija el plomo, asi que no se congela aqui:
+      // lo que se exige es que nombre la tarea y el campo, como los demas errores
+      // de forma del boceto.
+      if (!texto.includes('la tarea "barra"') || !texto.includes('"plomos"')) {
+        return `(${visto}) aborto, pero sin nombrar la tarea y el campo`;
+      }
+    }
+    return null;
+  }],
+
+  ['la cabecera no se movio: dice lo mismo con y sin "plomos" declarado', () => {
+    // La linea del plomo describe el DIRECTORIO, no lo que recibe un vidrio.
+    // Anadir ahi una cifra por tarea seria tocar la superficie de texto del CLI,
+    // y esta tanda no la toca. Los dos bocetos se escriben con el mismo nombre
+    // para que la linea entera sea comparable, no solo el trozo del plomo.
+    const dir = repoConPlomos('plomos-cabecera', PLOMOS_AB);
+    const lineaBoceto = (texto) => texto.replace(/\r\n/g, '\n').split('\n')
+      .find((linea) => linea.startsWith('boceto ')) ?? null;
+
+    const tarea = { id: 'una', rutas: ['app/una/'], prompt: 'x' };
+    const boceto = bocetoSuelto(dir, 'cabecera.json', { nombre: 'cabecera', tareas: [tarea] });
+    const antes = vitral(dir, '--seco', '--boceto', boceto);
+    if (antes.codigo !== 0) return `(sin plomos) esperaba codigo 0, salio ${antes.codigo}`;
+
+    bocetoSuelto(dir, 'cabecera.json', { nombre: 'cabecera',
+      tareas: [{ ...tarea, plomos: ['a.md'] }] });
+    const despues = vitral(dir, '--seco', '--boceto', boceto);
+    if (despues.codigo !== 0) return `(con plomos) esperaba codigo 0, salio ${despues.codigo}`;
+
+    const uno = lineaBoceto(antes.texto);
+    const otro = lineaBoceto(despues.texto);
+    if (uno === null || otro === null) return 'no salio la linea del boceto en la cabecera';
+    if (!/plomo 2 archivos \(/.test(uno)) return `la cabecera no cuenta el directorio: ${uno}`;
+    return uno === otro ? null : primeraDiferencia(uno, otro);
+  }],
+
+  ['un boceto que no existe sigue fallando igual, con leerPlomo corriendo antes', () => {
+    // leerPlomo ya no corre despues de leerBoceto sino antes, porque leerBoceto
+    // necesita la lista para juzgar los "plomos". Un directorio de plomo que no
+    // existe tampoco es un error, asi que el que manda sigue siendo el del
+    // boceto, con su texto y su codigo de siempre.
+    const escenarios = [
+      ['con plomo', repoConPlomos('plomos-sin-boceto', PLOMOS_AB)],
+      ['sin directorio plomo', repoConPlomos('plomos-sin-boceto-ni-plomo', {})],
+    ];
+    for (const [caso, dir] of escenarios) {
+      const { codigo, texto } = vitral(dir, '--seco', '--boceto', BOCETO_QUE_NO_ESTA);
+      if (codigo !== 1) return `(${caso}) esperaba codigo 1, salio ${codigo}`;
+      const queja = comprobarBloque(texto, `boceto que no existe · ${caso}`,
+        BLOQUE_BOCETO_QUE_NO_ESTA);
+      if (queja !== null) return queja;
     }
     return null;
   }],

@@ -201,19 +201,21 @@ node vitral.mjs --seco --boceto ejemplo/boceto.json
 | `timeout` | no | Minutos antes de matar la tarea. Por defecto 15 |
 | `modelo` | no | Alias o nombre de modelo: `sonnet`, `opus`, `claude-fable-5`. Para `opencode`, `proveedor/modelo`. Cadena no vacia y sin espacios |
 | `cwd` | no | Directorio de trabajo del agente. Ruta relativa a la raiz, que caiga dentro del repositorio y exista |
+| `plomos` | no | Que archivos del directorio del plomo lee esta tarea. Array de rutas relativas a ese directorio, sin subdirectorios. Omitido, los lee todos |
 
 ### Que valores acepta cada campo opcional
 
-`presupuesto`, `modelo` y `cwd` se comprueban antes de lanzar nada, no cuando el
-CLI del agente los rechaza a mitad de una ola.
+`presupuesto`, `modelo`, `cwd` y `plomos` se comprueban antes de lanzar nada, no
+cuando el CLI del agente los rechaza a mitad de una ola.
 
 | Campo | Valido | Invalido |
 |---|---|---|
 | `presupuesto` | Numero mayor que cero. Omitido significa "sin tope" | `0`, negativos, `NaN`, `Infinity`, cualquier cosa que no sea `number`, incluida la cadena `"3"` |
 | `modelo` | Cadena no vacia, sin espacios en blanco | Cadena vacia, cadena con espacios, y cualquier cosa que no sea `string` |
 | `cwd` | Cadena no vacia con una ruta **relativa**, que resuelva **dentro de la raiz** y **exista** en disco | Cadena vacia, ruta absoluta, ruta que salga de la raiz, directorio que no existe, y cualquier cosa que no sea `string` |
+| `plomos` | Array de cadenas. Cada una, una **ruta relativa al directorio del plomo**, **sin subdirectorios**, que nombre un `.md` que esta ahi. Sin repetidos. Omitido significa "todos"; `[]` significa "ninguno" | `null`, una cadena suelta, un elemento que no sea `string`, cadena vacia, nombre repetido, cualquier ruta con separador (`/` o `\`), y cualquier nombre que no este en el directorio |
 
-Los tres siguen siendo opcionales: omitirlos es valido y es lo normal.
+Los cuatro siguen siendo opcionales: omitirlos es valido y es lo normal.
 
 Tres decisiones que se tomaron a proposito, porque parecen severas y no lo son:
 
@@ -229,13 +231,23 @@ Tres decisiones que se tomaron a proposito, porque parecen severas y no lo son:
   apunte dentro del repositorio, porque un boceto con rutas absolutas solo
   funciona en un ordenador.
 
+**`plomos` distingue omitirlo de dejarlo vacio.** Sin el campo, la tarea recibe
+todos los contratos del directorio, en orden alfabetico, que es lo que hacian
+todas antes de que el campo existiera. Con `[]` no recibe ninguno, y el prompt lo
+dice con sus palabras. Con nombres recibe esos, y en el orden en que estan
+escritos en el array. Si pide uno que no esta en el directorio, o uno que cuelga
+de un subdirectorio —`plomos` no baja a subdirectorios—, vitral aborta al leer el
+boceto, antes de lanzar nada: un contrato que se pide y no llega es peor que no
+pedirlo, porque el agente no sabe que le falta.
+
 **Vitral no valida que el modelo exista.** No puede: los nombres cambian con la
 version del CLI y con el proveedor. Solo comprueba la forma; que el modelo exista
 lo decide el CLI, que ademas falla rapido y barato.
 
-La forma —tipo, rango, ruta relativa— se comprueba al leer el boceto. Que el `cwd`
-exista en disco y caiga dentro del repositorio se comprueba con los demas
-guardarrailes, asi que `--seco` tambien lo caza, sin lanzar ningun agente.
+La forma —tipo, rango, ruta relativa, nombre de plomo que se pueda pedir— se
+comprueba al leer el boceto. Que el `cwd` exista en disco y caiga dentro del
+repositorio se comprueba con los demas guardarrailes, asi que `--seco` tambien
+lo caza, sin lanzar ningun agente.
 
 Las tareas se ordenan en olas por dependencias. Las de una misma ola corren en
 paralelo; las olas, en serie. Si una tarea falla, la corrida se detiene ahi y las
@@ -255,7 +267,8 @@ bloques en este orden:
    nombrados por su id, y que `el codigo que tienes al lado puede estar cambiando
    mientras trabajas`. Lo comun a los dos casos: no hay a quien preguntarle, ni
    que esperar a nadie.
-2. **El plomo**, entero, marcado como fuente de verdad obligatoria.
+2. **El plomo**, marcado como fuente de verdad obligatoria: entero, o los
+   archivos que la tarea haya declarado en `plomos`.
 3. Su tarea.
 4. Sus rutas, con la instruccion de no salirse de ellas.
 5. Los handoffs de las tareas de las que depende.

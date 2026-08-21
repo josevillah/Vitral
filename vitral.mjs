@@ -157,8 +157,11 @@ async function principal() {
   // cazar antes de gastar.
   if (resolver(guardarrailes.revisarBoceto({ rutaBoceto, raiz }))) return 1;
 
-  const boceto = leerBoceto(rutaBoceto);
+  // El plomo se lee primero: leerBoceto lo necesita para juzgar los "plomos" que
+  // declare una tarea, que es forma —¿lleva separador?, ¿esta en esta lista?— y
+  // se decide con un dato que ya se tiene, sin volver al disco.
   const plomo = leerPlomo(path.join(path.dirname(rutaBoceto), 'plomo'));
+  const boceto = leerBoceto(rutaBoceto, plomo);
 
   let tareas = boceto.tareas;
   if (banderas.solo) tareas = cerrarDependencias(tareas, banderas.solo);

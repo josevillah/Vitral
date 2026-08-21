@@ -50,7 +50,7 @@ hojas        salida · git · agentes · rutas · prompt · errores
 medio        boceto -> agentes, errores        olas -> errores
              proceso -> agentes                registro -> salida, agentes, proceso
              guardarrailes -> agentes, git, proceso, rutas
-orquesta     corrida -> salida, prompt, proceso, registro
+orquesta     corrida -> salida, prompt, proceso, registro, boceto
 entrada      vitral.mjs -> todos menos agentes y proceso
 ```
 
@@ -67,7 +67,8 @@ varios archivos a la vez: dilo en el handoff.
 ### `tarea` — una entrada del boceto
 
 ```
-{ id, prompt, rutas: [], agente, necesita?: [], presupuesto?, timeout?, modelo?, cwd? }
+{ id, prompt, rutas: [], agente, necesita?: [], presupuesto?, timeout?, modelo?,
+  cwd?, plomos?: [] }
 ```
 
 `boceto.mjs` garantiza que `id`, `prompt`, `rutas` y `agente` existen y son
@@ -81,11 +82,13 @@ es lo normal:
 | `presupuesto` | Numero mayor que cero. Omitido significa "sin tope" | `0`, negativos, `NaN`, `Infinity`, cualquier cosa que no sea `number`, incluida la cadena `"3"` |
 | `modelo` | Cadena no vacia, sin espacios en blanco | Cadena vacia, cadena con espacios, y cualquier cosa que no sea `string` |
 | `cwd` | Cadena no vacia con una ruta **relativa**, que resuelva **dentro de la raiz** y **exista** en disco | Cadena vacia, ruta absoluta, ruta que salga de la raiz, directorio que no existe, y cualquier cosa que no sea `string` |
+| `plomos` | Array de cadenas. Cada una es una **ruta relativa al directorio del plomo**, **sin subdirectorios**, que nombra un `.md` que existe ahi. Sin duplicados. **Omitido significa "todos"**. `[]` significa "ninguno" | `null`, cadena suelta, array con algo que no sea `string`, cadena vacia, nombre repetido, cualquier ruta con separador, y cualquier nombre que no este en el directorio |
 
-De estos tres, la forma la comprueba `boceto.mjs`; el entorno —que el `cwd` exista
-y caiga dentro de la raiz— lo juzga `guardarrailes.mjs`.
+De estos cuatro, la forma la comprueba `boceto.mjs` —tambien la de `plomos`,
+incluido que el nombre este en el directorio: ver `src/boceto.mjs`—; el entorno
+—que el `cwd` exista y caiga dentro de la raiz— lo juzga `guardarrailes.mjs`.
 
-Tres decisiones que se tomaron a proposito y que no se revierten sin hablarlo:
+Cuatro decisiones que se tomaron a proposito y que no se revierten sin hablarlo:
 
 - **`presupuesto: 0` aborta en vez de significar "sin tope".** Quien quiera correr
   sin limite omite el campo. Aceptar el `0` como ilimitado es exactamente el
@@ -97,6 +100,12 @@ Tres decisiones que se tomaron a proposito y que no se revierten sin hablarlo:
   agente, y no hay otra red de seguridad. Una ruta absoluta aborta aunque apunte
   dentro del repositorio: un boceto con rutas absolutas solo funciona en un
   ordenador.
+- **En `plomos`, `[]` no es lo mismo que omitirlo, y los dos son validos.** Esto
+  no contradice lo del `presupuesto: 0`: alli el `0` es un valor del mismo tipo
+  que el valido y se confunde con "sin tope"; aqui el array vacio y el campo
+  ausente se distinguen sin ambiguedad y dicen dos cosas distintas —"ninguno" y
+  "todos"—, y no hay otra forma de decir "ninguno". La comprobacion es
+  `tarea.plomos === undefined`, nunca `!tarea.plomos`.
 
 Vitral no valida que el modelo exista: los nombres cambian con la version del CLI
 y con el proveedor. Eso lo decide el CLI, que falla rapido y barato.
@@ -151,6 +160,11 @@ El orden al pintar es **mensaje, detalles, sugerencia**.
 ```
 { raiz, olas, ejecutan, plomo, handoffs, incompletos }
 ```
+
+`plan.plomo` es lo que devuelve `leerPlomo`, y gana dos claves con `plomos`:
+`{ texto, archivos, porArchivo, dir }`. `texto` y `archivos` no cambian; las dos
+nuevas son lo que necesita `plomoDe` para repartir por tarea y lo que necesitan
+los errores para nombrar el directorio.
 
 Ojo con esto: `plan.handoffs` y `plan.incompletos` **se mutan durante la
 corrida**. Cuando una tarea de la ola 1 deja su handoff, se mete en el mapa para
@@ -469,18 +483,62 @@ es grave. Quien juzga es `guardarrailes.mjs`.
 ### `src/boceto.mjs`
 
 ```
-leerBoceto(rutaBoceto) -> boceto      // lanza ErrorVitral si la forma esta mal
-leerPlomo(dirPlomo) -> { texto, archivos }
+leerBoceto(rutaBoceto, plomo) -> boceto   // lanza ErrorVitral si la forma esta mal
+leerPlomo(dirPlomo) -> { texto, archivos, porArchivo, dir }
+plomoDe(tarea, plomo) -> string
 ```
 
 Valida forma: campos obligatorios, tipos, dependencias que apuntan a tareas que
 existen, agente conocido. Rellena `agente` con `'claude'` si falta.
 
 Los opcionales entran ahi: `presupuesto` numero mayor que cero, `modelo` cadena no
-vacia sin espacios, `cwd` cadena no vacia y relativa. Es forma, o sea lo que se
-decide mirando el valor y nada mas, que es todo lo que se puede hacer aqui:
-`leerBoceto(rutaBoceto)` no recibe la raiz. Si el `cwd` existe en disco y si cae
-dentro del repositorio no es forma: eso lo juzga `guardarrailes.mjs`.
+vacia sin espacios, `cwd` cadena no vacia y relativa, `plomos` array de nombres
+que se puedan pedir y que esten en el directorio del plomo. Es forma, o sea lo que
+se decide mirando el valor y nada mas, que es todo lo que se puede hacer aqui:
+`leerBoceto` no recibe la raiz. Si el `cwd` existe en disco y si cae dentro del
+repositorio no es forma: eso lo juzga `guardarrailes.mjs`.
+
+**`leerBoceto` lleva un segundo parametro obligatorio**, el plomo ya leido, y por
+eso `vitral.mjs` invierte el orden de sus dos lineas: `leerPlomo` primero,
+`leerBoceto` despues. No lleva valor por defecto y no se defiende de que falte: un
+`= []` haria que un llamador que se lo olvide rechace como invalido un boceto que
+esta bien, que es peor que reventar. Hoy el unico llamador es `vitral.mjs`.
+
+**Que un nombre de `plomos` este en el directorio si es forma, aunque suene a
+entorno**, y esta es la duda que va a volver. El directorio del plomo **no depende
+de la raiz**: sale de `rutaBoceto`, que `leerBoceto` ya recibe. Con la lista
+delante, *"¿este nombre lleva separador?"* y *"¿esta en esta lista?"* se deciden
+mirando el valor y un dato que ya llego, sin tocar el disco. Por eso el `cwd` se
+parte entre este modulo y `guardarrailes.mjs`, y `plomos` no se parte: aqui se
+decide entero.
+
+**Las dos comprobaciones van en orden: primero el separador, despues la lista.**
+Al reves, un nombre con subdirectorio saldria por el error de "no existe", que es
+cierto y no explica nada: el problema no es que falte, es que no se puede pedir
+aunque el archivo este ahi.
+
+`leerPlomo` gana dos claves y no cambia ninguna de las que ya tenia. `porArchivo`
+es un `Map<nombre, string>` con el trozo ya montado de cada archivo, con su linea
+`--- plomo: <nombre> ---` delante; `dir` es el directorio tal como se recibio, sin
+normalizar, que es como se pinta en los errores. `texto` se construye **desde**
+`porArchivo` —sus valores unidos por `'\n\n'`, en orden alfabetico—, para
+que no existan dos maneras de montar lo mismo.
+
+`archivos` sigue siendo una lista de nombres y no de objetos, a proposito:
+**`salida.mjs` no se toca, y la tabla del catalogo de eventos tampoco.** El campo
+`plomo` del evento `corrida` sigue siendo `{ archivos: string[], bytes: number }`
+con los nombres, y sigue describiendo **el directorio**, no lo que recibe un
+vidrio. Lo que recibe cada tarea ya se ve en `--seco` y en el campo `bytes` del
+evento `prompt`.
+
+`plomoDe` es el reparto, y no valida nada: cuando corre, `leerBoceto` ya garantizo
+que todos los nombres son pedibles y existen, igual que los demas modulos no
+revalidan `id` ni `rutas`. Con `tarea.plomos === undefined` devuelve **el mismo
+`plomo.texto`**, sin recomponerlo —de ahi que un boceto sin el campo reciba byte a
+byte el prompt de antes, y no por buena fe—; si no, une los valores de
+`porArchivo` de los nombres declarados, **en el orden del array**, y con `[]` sale
+la cadena vacia. Quien lo llama es `corrida.mjs`, que le pasa la cadena ya
+resuelta a `construirPrompt`.
 
 El plomo se lee del directorio del boceto, no de una ruta fija: con
 `--boceto ejemplo/boceto.json` los contratos salen de `ejemplo/plomo/`.
@@ -729,6 +787,11 @@ es el de la ola, sin ordenar ni reordenar, y es determinista porque
 `calcularOlas` lo es. Las tareas saltadas por `--solo` no estan en la ola, asi
 que no cuentan como companeras.
 
+Ahi mismo se resuelve el plomo de la tarea: `promptDe` llama a
+`plomoDe(tarea, plan.plomo)` y le pasa la cadena a `construirPrompt`, que sigue
+recibiendo el plomo ya resuelto y sin saber que existe el campo `plomos`. Es la
+unica razon por la que `corrida.mjs` importa de `boceto.mjs`.
+
 **El latido vive aqui y solo aqui.** Es el unico modulo que sabe que existe una
 ola y que vidrios siguen en vuelo. `proceso.mjs` ejecuta uno y no sabe de olas;
 `salida.mjs` sabe pintar la linea pero no cuando toca. Esta encerrado en
@@ -774,6 +837,7 @@ dan de verdad:
 | Cambiar lo que dice la marca de corte incompleto | `registro.mjs` |
 | Cambiar donde o con que nombre se guarda algo en `.vitral/` | `registro.mjs`, y nada mas. Tambien el sello `handoffs/.tanda` |
 | Cambiar cuando un handoff en disco vale y cuando se ignora | `registro.mjs`: lo decide `cargarHandoffs` con el sello. `salida.mjs` solo pinta el `otraTanda` que salga de ahi |
+| Cambiar que plomo recibe una tarea | El campo `plomos` del boceto, y nada de codigo. Si cambia la regla de que se puede pedir o como se reparte: `boceto.mjs`, que valida el nombre y lo reparte con `plomoDe`. `corrida.mjs` solo llama, y `prompt.mjs` recibe la cadena ya resuelta |
 | Anadir un campo al boceto | `boceto.mjs` lo valida, y quien lo consuma: `agentes.mjs` si acaba en un flag, `proceso.mjs` si cambia como se lanza, `prompt.mjs` si el agente lo lee |
 | Cambiar que aborta y que solo avisa | `guardarrailes.mjs`. Solo toca `vitral.mjs` si cambia el orden en que se resuelven |
 | Anadir una comprobacion previa nueva | `guardarrailes.mjs` la escribe y devuelve veredictos; `vitral.mjs` la llama en su sitio del orden y decide si el modo seco la respeta |

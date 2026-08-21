@@ -13,7 +13,16 @@ import path from 'node:path';
 import { AGENTES } from './agentes.mjs';
 import { ErrorVitral } from './errores.mjs';
 
-export function leerBoceto(rutaBoceto) {
+// La ultima linea de los dos errores de "plomos". Con el directorio vacio o
+// inexistente la lista quedaria colgando, asi que se dice la verdad entera.
+// La ruta se pinta tal como llego, sin normalizar barras, igual que rutaBoceto.
+function disponibles(plomo) {
+  return plomo.archivos.length > 0
+    ? `plomos disponibles: ${plomo.archivos.join(', ')}`
+    : `no hay ningun .md en "${plomo.dir}"`;
+}
+
+export function leerBoceto(rutaBoceto, plomo) {
   if (!existsSync(rutaBoceto)) {
     throw new ErrorVitral(`no encuentro el boceto en "${rutaBoceto}".`,
       'crea .vitral/boceto.json o pasa otro con --boceto <archivo>');
@@ -75,6 +84,45 @@ export function leerBoceto(rutaBoceto) {
         `la tarea "${tarea.id}" tiene un "cwd" invalido: ${JSON.stringify(tarea.cwd)}.`,
         'debe ser una ruta relativa no vacia, como "sub/modulo"');
     }
+    // "plomos" declara que contratos lee esta tarea. Omitirlo significa "todos",
+    // y por eso la comprobacion es === undefined y no !tarea.plomos: con [], que
+    // significa "ninguno", daria lo contrario. null es invalido, como en los tres
+    // campos de arriba.
+    if (tarea.plomos !== undefined) {
+      if (!Array.isArray(tarea.plomos) ||
+          tarea.plomos.some((nombre) => typeof nombre !== 'string' || nombre.trim() === '')) {
+        throw new ErrorVitral(
+          `la tarea "${tarea.id}" tiene un "plomos" invalido: ${JSON.stringify(tarea.plomos)}.`,
+          'debe ser un array de nombres de archivos del directorio del plomo;'
+          + ' omite el campo para recibirlos todos, o ponlo vacio para no recibir ninguno');
+      }
+      const pedidos = new Set();
+      for (const nombre of tarea.plomos) {
+        if (pedidos.has(nombre)) {
+          throw new ErrorVitral(
+            `la tarea "${tarea.id}" repite el plomo "${nombre}" en "plomos".`,
+            'cada plomo se declara una sola vez');
+        }
+        pedidos.add(nombre);
+        // Primero el separador y despues la lista, y el orden no es de estilo:
+        // al reves, una ruta a un subdirectorio saldria por el error de "no
+        // existe", que es verdad y no explica nada. El problema no es que falte,
+        // es que no se puede pedir aunque el archivo este ahi.
+        if (nombre.includes('/') || nombre.includes('\\')) {
+          throw new ErrorVitral(
+            `la tarea "${tarea.id}" pide el plomo "${nombre}", y "plomos" no baja a subdirectorios.`,
+            `solo entran en el prompt los .md que hay sueltos en "${plomo.dir}".\n`
+            + 'Un subdirectorio es donde se deja un contrato para que deje de gobernar:\n'
+            + 'lo que cuelga de uno no lo lee ningun agente, y por eso no se puede pedir.\n'
+            + disponibles(plomo));
+        }
+        if (!plomo.archivos.includes(nombre)) {
+          throw new ErrorVitral(
+            `la tarea "${tarea.id}" pide el plomo "${nombre}", que no existe en "${plomo.dir}".`,
+            disponibles(plomo));
+        }
+      }
+    }
     if (!tarea.agente) tarea.agente = 'claude';
     if (!AGENTES[tarea.agente]) {
       throw new ErrorVitral(
@@ -97,18 +145,39 @@ export function leerBoceto(rutaBoceto) {
 }
 
 // Los contratos viven junto al boceto: <dir del boceto>/plomo/*.md.
-// Se concatenan en orden alfabetico y entran enteros en el prompt de todos.
+// Se concatenan en orden alfabetico; quien no declare "plomos" los recibe todos.
+//
+// El readdirSync no baja a subdirectorios, y eso es lo que hace que un contrato
+// guardado en una carpeta de dentro deje de gobernar. De ahi que "plomos" no
+// pueda pedir una ruta con separador.
 export function leerPlomo(dirPlomo) {
-  if (!existsSync(dirPlomo)) return { texto: '', archivos: [] };
+  if (!existsSync(dirPlomo)) {
+    return { texto: '', archivos: [], porArchivo: new Map(), dir: dirPlomo };
+  }
 
   const archivos = readdirSync(dirPlomo)
     .filter((nombre) => nombre.endsWith('.md'))
     .sort();
 
-  const trozos = archivos.map((nombre) => {
+  const porArchivo = new Map(archivos.map((nombre) => {
     const contenido = readFileSync(path.join(dirPlomo, nombre), 'utf8').trim();
-    return `--- plomo: ${nombre} ---\n\n${contenido}`;
-  });
+    return [nombre, `--- plomo: ${nombre} ---\n\n${contenido}`];
+  }));
 
-  return { texto: trozos.join('\n\n'), archivos };
+  // texto se monta DESDE porArchivo, y no aparte, para que no existan dos
+  // maneras de montar lo mismo que puedan divergir. El Map conserva el orden de
+  // insercion, que es el alfabetico de `archivos`.
+  return { texto: [...porArchivo.values()].join('\n\n'), archivos, porArchivo, dir: dirPlomo };
+}
+
+// El plomo que le toca a una tarea. Omitir "plomos" devuelve el texto entero tal
+// cual, el mismo objeto que ya se construia: esa identidad es lo que garantiza
+// que un boceto sin el campo reciba byte a byte el prompt de siempre.
+// Con el campo declarado manda el orden del array, no el alfabetico.
+//
+// No valida nada: cuando esto corre, leerBoceto ya garantizo que cada nombre es
+// pedible y existe, igual que nadie revalida "id" ni "rutas".
+export function plomoDe(tarea, plomo) {
+  if (tarea.plomos === undefined) return plomo.texto;
+  return tarea.plomos.map((nombre) => plomo.porArchivo.get(nombre)).join('\n\n');
 }
