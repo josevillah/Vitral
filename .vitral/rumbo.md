@@ -95,12 +95,7 @@ tanda, como aqui conviven `.vitral/boceto.json` y `.vitral/ui/boceto.json`.
 
 ### Lo que dejo pendiente la tanda del modo json
 
-Cuatro cosas que salieron de esa tanda, ya entregada, y que no entraban en ella.
-
-**La ayuda no menciona `--json`.** El README la lista en su bloque de Uso y la
-constante `AYUDA` de `src/salida.mjs` no, asi que el programa y su documentacion se
-contradicen. Lo pide el propio `motor.md`: *"anadir una bandera al CLI: `vitral.mjs`
-la parsea y la usa; `salida.mjs` si sale en la ayuda"*. Es una linea.
+Tres cosas que salieron de esa tanda, ya entregada, y que no entraban en ella.
 
 **La corrida que falla no imprime resumen, y es la que mas lo necesita.**
 `vitral.mjs` hace `if (fallidas.length > 0) { avisoFallo(); return 1; }` y se salta

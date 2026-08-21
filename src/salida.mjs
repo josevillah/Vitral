@@ -125,6 +125,7 @@ const AYUDA = `vitral · orquestador de agentes en paralelo
   node vitral.mjs --solo <id> --rehacer   reejecuta tambien las dependencias
   node vitral.mjs --boceto <archivo> usa otro boceto
   node vitral.mjs --sin-git          corre sin repositorio git (peligroso)
+  node vitral.mjs --json             emite un evento JSON por linea
   node vitral.mjs --historial        las ultimas 10 corridas
   node vitral.mjs --historial <n>    las ultimas <n>
   node vitral.mjs --historial <id>   el detalle de esa corrida
