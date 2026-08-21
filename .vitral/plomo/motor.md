@@ -285,8 +285,28 @@ const emitir = (evt, datos) =>
 2. **Numeros crudos.** `ms` es milisegundos, `costo` es dolares.
    `formatearDuracion` y `formatearCosto` no aparecen jamas en un evento:
    formatear es de quien pinta.
-3. **Las rutas van con barras hacia delante**, tambien en Windows:
-   `.split(path.sep).join('/')`.
+3. **Todo campo que lleve una ruta va con barras hacia delante**, tambien en
+   Windows: `.split(path.sep).join('/')`. **Sin excepcion, y vale para los campos
+   que vengan**, no solo para los que hay hoy: un campo nuevo con una ruta dentro
+   se normaliza al emitirlo, y la revision de la tanda que lo anada lo comprueba.
+   Una ruta en un evento es un dato, no la ruta del sistema de quien corrio el
+   motor, y un consumidor que reciba las dos barras segun el campo tiene un
+   problema que no puede resolver desde fuera.
+
+   **La excepcion es que no hay excepcion de campo: `mensaje` y `sugerencia` no
+   son campos con una ruta, son prosa.** Van tal cual se redactaron, con el
+   separador del sistema, y ahi si aparece la barra invertida en Windows. No se
+   normalizan, y el motivo no es pereza: un consumidor no puede extraer una ruta
+   de una frase en castellano con fragmentos entrecomillados, asi que ponerle
+   barras hacia delante solo le daria la **apariencia** de una ruta parseable sin
+   contrato detras. Eso invita a un regex sobre texto libre que se rompe en cuanto
+   alguien reformule el mensaje. Si un consumidor necesita esa ruta, **se le da un
+   campo**; hasta entonces, `mensaje` y `sugerencia` son para leer.
+
+   Hoy la normalizacion se aplica en `salida.mjs` (`conBarras`, en `corrida.boceto`,
+   `cierre.marca` y `fallo.logs`) y en `rutas.mjs` (`normalizarRuta`, de donde
+   salen los `veredicto.detalles` de los solapamientos). Que la lista este completa
+   es la regla; que sean esos seis sitios es el estado de hoy.
 4. **El evento nunca lleva la salida cruda del agente.** Eso ya esta entero en
    `.vitral/logs/<id>.json`, y esa disposicion es de `registro.mjs`.
 
@@ -887,6 +907,17 @@ mano lo que una funcion ya sabe escribir es inventarse un segundo formato que
 nadie mantiene. Si la funcion todavia no existe porque es parte de la tanda,
 escribe el ejemplo a mano, pero **vuelve a generarlo en cuanto exista** y
 sustituyelo: el plomo de hoy es el contrato de la tanda siguiente.
+
+**Y generalo donde corre.** Generar no basta: un ejemplo sacado del codigo real
+pero en otro sistema operativo es tan poco reproducible como uno escrito a mano, y
+engana mas, porque viene con el sello de haber salido de una funcion. Paso en la
+tanda de `plomos`: los dos bloques de error se generaron llamando a
+`salida.imprimirError`, como manda esta regla, pero en una maquina POSIX, y
+pintaban `".vitral/plomo"` donde Windows pinta `".vitral\plomo"`. **Cuando una
+linea del ejemplo dependa de la maquina —un separador de rutas, un salto de linea,
+una fecha—, dilo en el plomo y di contra que se compara** (ahi, contra
+`path.join('.vitral', 'plomo')`). Un bloque literal con una sola cadena que no lo
+es tiene que decir cual.
 
 **Repasa los bordes antes de dar el plomo por bueno.** Cero, vacio, ausente,
 negativo, uno solo, mas de los que caben. Un caso que el plomo no cubre no lo

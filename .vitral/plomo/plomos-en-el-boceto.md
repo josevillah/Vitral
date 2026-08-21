@@ -280,7 +280,7 @@ motivo entero y no solo que la ruta no vale:
 
 ```
 vitral: la tarea "barra" pide el plomo "retirados/historial.md", y "plomos" no baja a subdirectorios.
-        solo entran en el prompt los .md que hay sueltos en ".vitral/plomo".
+        solo entran en el prompt los .md que hay sueltos en ".vitral\plomo".
         Un subdirectorio es donde se deja un contrato para que deje de gobernar:
         lo que cuelga de uno no lo lee ningun agente, y por eso no se puede pedir.
         plomos disponibles: motor.md, plomos-en-el-boceto.md
@@ -294,21 +294,51 @@ la pone `salida.mjs` al pintar, como manda la invariante 1.
 que decir:
 
 ```
-vitral: la tarea "barra" pide el plomo "paleta.md", que no existe en ".vitral/plomo".
+vitral: la tarea "barra" pide el plomo "paleta.md", que no existe en ".vitral\plomo".
         plomos disponibles: motor.md, plomos-en-el-boceto.md
 ```
 
 Es la misma forma que el error del agente desconocido que ya esta ahi
-(`agentes disponibles: ...`), a proposito. En los dos, la ruta se pinta tal cual la
-trae `plomo.dir`, sin normalizar barras, como ya hace `rutaBoceto` en el error de
-"no encuentro el boceto".
+(`agentes disponibles: ...`), a proposito.
 
 **Cuando el directorio esta vacio o no existe**, la lista disponible seria vacia y
 la ultima linea quedaria colgando. En ese caso, en los dos errores, esa linea es:
 
 ```
-no hay ningun .md en ".vitral/plomo"
+no hay ningun .md en ".vitral\plomo"
 ```
+
+### La unica parte de estos bloques que no es literal
+
+**El directorio se pinta tal cual lo trae `plomo.dir`, sin normalizar barras**, y
+`plomo.dir` sale de un `path.join`. Los tres bloques de arriba estan generados
+corriendo el motor **en Windows**, que es donde corre esto, y por eso dicen
+`".vitral\plomo"`. En una maquina POSIX la misma linea dice `".vitral/plomo"`.
+
+Todo lo demas de los tres bloques se compara caracter a caracter. Esa cadena, no:
+se compara contra `path.join('.vitral', 'plomo')`, como ya hace
+`pruebas/checks.mjs`. **Afirmar la barra literal seria afirmar el sistema
+operativo de quien escribio el ejemplo**, que es justo el fallo que costo la
+primera version de esta seccion: se genero llamando al codigo, como manda
+`motor.md`, pero en la maquina equivocada. Generar no basta; hay que generar
+donde corre.
+
+### Y por que aqui no se normaliza, aunque el modo json normalice
+
+Esto va a parecer una incoherencia con la regla del modo json de `motor.md`, y no
+lo es: **esa regla es de los campos, y esto es prosa.** `mensaje` y `sugerencia`
+son texto para que lo lea una persona, no un dato que un consumidor extraiga. Un
+consumidor no puede sacar una ruta de una frase en castellano con fragmentos
+entrecomillados, y ponerle barras hacia delante no lo haria posible: le daria la
+apariencia de una ruta parseable sin contrato detras, que es peor, porque invita
+al regex que se rompe en cuanto alguien reformule el mensaje.
+
+En pantalla, ademas, `".vitral\plomo"` es lo que teclearia quien esta leyendo el
+error en Windows.
+
+**Si alguna vez la interfaz necesita esa ruta como dato, se le da un campo**, no
+una barra. Que nadie "arregle" esto normalizando la prosa: ademas de no servir,
+cambiaria el modo texto, que es contrato con quien usa el CLI.
 
 ---
 
