@@ -1,14 +1,34 @@
-# Contrato de la tanda · el modo corrida
+# Contrato · el modo corrida
 
-Lanzar una tanda de Vitral desde la ventana, en el proyecto activo, y ver en que va
-cada vidrio.
+> **Este contrato NO se retira al cerrar una tanda.** Es permanente, como
+> `panel-pty.md` y como `motor.md`: describe una superficie viva, no una tanda
+> entregada. Se corrige en sitio cuando el codigo lo desmiente, y sigue viajando en
+> los prompts de las tandas que declaren `corrida.md` en sus `plomos`.
 
-Las dos mitades ya existen: el motor emite eventos JSON con `--json`, y la ventana
-abre paneles con `cwd`. Esta tanda las une, y **nada mas**.
+Lanzar una tanda de Vitral desde la ventana, en el proyecto activo, ver en que va cada
+vidrio, y leer lo que dejo escrito al terminar.
 
-Este es plomo de tanda: se retira al cerrar, y lo que sobreviva se sube a
-`panel-pty.md`, que es el contrato permanente. **Manda sobre lo que te parezca
-razonable.** Si algo aqui te chirria, hazlo igual y dilo en tu handoff.
+**Manda sobre lo que te parezca razonable.** Si algo aqui te chirria, hazlo igual y
+dilo en tu handoff.
+
+### Este archivo nacio diciendo lo contrario, y conviene saber por que
+
+Hasta el 21-08-2026 su cabecera decia *"Este es plomo de tanda: se retira al cerrar, y
+lo que sobreviva se sube a `panel-pty.md`"*. Nacio como plomo de la tanda del modo
+corrida y esa frase era verdad entonces. **Dejo de serlo al decidirse que la superficie
+corrida tiene contrato propio y permanente**, y la frase se quedo.
+
+No es una anecdota: durante dos tandas se le anadio contrato permanente —el catalogo de
+`leer_handoff`, las marcas de incompleto— mientras el propio archivo pedia que lo
+retiraran. **Cualquiera que hubiera seguido el paso 2 del cierre al pie de la letra
+habria borrado el contrato vivo de esta superficie**, y con el, el unico sitio donde
+consta que `leer_handoff` existe.
+
+De ahi la regla que ahora cumplen los tres contratos permanentes: **un plomo dice de si
+mismo si se retira o no, en su cabecera, antes que ninguna otra cosa.** El
+procedimiento de cierre pregunta *"¿la tanda siguiente sobre esto parte de este
+documento?"*, y esa pregunta se responde mucho mejor con el documento diciendolo que
+adivinandolo por el titulo — que aqui, ademas, decia `Contrato de la tanda` y mentia.
 
 ---
 

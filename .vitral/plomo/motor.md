@@ -1,5 +1,10 @@
 # Contrato del motor de Vitral
 
+> **Este contrato NO se retira al cerrar una tanda.** Es permanente, como
+> `.vitral/ui/plomo/panel-pty.md` y `corrida.md`: describe una superficie viva, no una
+> tanda entregada. Se corrige en sitio cuando el codigo lo desmiente, y lo paga cada
+> vidrio de cada tanda del motor, a proposito.
+
 El motor vive en `src/`. `vitral.mjs` es solo la entrada.
 
 Este archivo es el plomo del motor: si vas a tocar un modulo, esto es lo que

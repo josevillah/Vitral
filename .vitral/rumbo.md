@@ -235,6 +235,73 @@ cinco tareas de la tanda de los eventos —plomo de 53.5 KB, prompt de 58 KB— 
 
 Es la cifra con la que se convierte cualquier ahorro de KB en dolares, aqui y en
 cualquier otra decision de plomo.
+### Pendiente del motor: el cierre de tanda no tiene detector
+
+**Tanda de motor, pequena, sin escribir. Anotada el 21-08-2026 con el diagnostico.**
+
+Cerrar una tanda son tres cosas: mover su plomo a `retirados/`, borrar el boceto y
+borrar los handoffs. **Es el paso que mas se olvida, y no por descuido: de los tres
+artefactos, el handoff es el unico cuyo olvido no deja rastro.**
+
+| Artefacto | Si se olvida | Quien lo canta |
+|---|---|---|
+| El plomo sin retirar | Viaja en el prompt de cada vidrio de cada tanda siguiente, y se paga en cada uno | La cabecera de `--seco`: dice cuantos archivos de plomo hay y cuanto pesan |
+| El boceto sin borrar | `node vitral.mjs` a secas lo relanza tal cual | Se nota en cuanto alguien lo lanza. **Y ya paso**: el 21-08-2026 costo $10.79 |
+| **El handoff huerfano** | `--solo` se salta la dependencia que lo tiene, sin mirar de que tanda es, e inyecta su contenido en el prompt del dependiente **como si fuera de esta tanda** | **Nadie** |
+
+Un handoff viejo no estorba: **miente**, y miente dentro de un prompt.
+
+#### Lo que hay que hacer, y es una linea reescrita
+
+**El calculo ya existe.** `cargarHandoffs`, en `src/registro.mjs`, ya compara el sello
+`.vitral/handoffs/.tanda` con el nombre de la tanda en curso y cuenta los que son de
+otra; `salida.mjs` ya pinta el resultado en la cabecera:
+
+```
+        1 handoff en disco es de la tanda "El modo corrida: la ventana lanza una tanda": se ignora
+```
+
+**Ese es el hallazgo, redactado como nota al margen.** Dice "se ignora", que suena
+inofensivo, cuando lo que significa es *"hay una tanda sin cerrar"*. Convertirlo en
+aviso es reescribir una linea que ya se calcula.
+
+**Y va en el motor, no en la ventana**, por una razon que no es de gusto: la ventana lee
+esa cabecera del evento `corrida`, asi que un aviso en el motor sirve **en los dos
+sitios**. Al reves no: un aviso solo en la ventana dejaria mudas las tandas lanzadas
+desde una terminal, **que son justo las que se olvidaron de cerrar**.
+
+#### Lo que hay que ampliar, y es lo unico que no es gratis
+
+**El detector de hoy no enumera: mira por nombre.** `cargarHandoffs` recorre las
+**tareas del boceto en curso** y hace `existsSync` de `<id>.md` por cada una. Con lo
+cual solo ve un handoff huerfano **si su id coincide con el de una tarea de la tanda
+nueva**. Es lo que ya dice el contrato del planificador —*"el sello solo lo caza si la
+tanda siguiente reutiliza ese id"*— y es lo que hace que el aviso llegue tarde o no
+llegue.
+
+Para que sea un detector de verdad hay que leer el directorio, no las tareas. Es un
+`readdirSync` en `registro.mjs`, que es el modulo al que le corresponde por la tabla
+"Donde va cada cosa": *"Cambiar donde o con que nombre se guarda algo en `.vitral/`"*.
+Y el aviso lo pinta `salida.mjs`, por la invariante 1.
+
+**Ojo con dos bordes al escribirla:** no confundir `<id>.INCOMPLETO.md` con un handoff
+—son dos artefactos y el segundo tambien queda huerfano—, y **no avisar cuando el sello
+coincide**, porque entonces los handoffs son de la tanda que se esta relanzando y estan
+donde tienen que estar.
+
+#### Por que no lo hace la ventana
+
+Se evaluo y se descarto. Cerrar tiene siete pasos, cinco mecanicos y tres de juicio, y
+el segundo es la puerta: *¿este plomo es permanente o es de esta tanda?* La ventana no
+puede responderlo, y hasta el 21-08-2026 **el propio `corrida.md` lo respondia mal de si
+mismo** —decia "se retira al cerrar" siendo permanente—, asi que una automatizacion que
+lo hubiera leido habria borrado el contrato vivo de esa superficie. Se arreglo poniendo
+la declaracion en la cabecera de los tres contratos permanentes.
+
+Ademas, el cierre ocurre en `chore/retirar-<tanda>`, una rama que la persona crea
+**antes** de que se toque nada. La ventana no toca git, asi que no puede garantizar esa
+precondicion, y borrar en la rama equivocada es peor que el olvido que se queria evitar.
+
 ### Un borde que hoy es un fallo latente
 
 `--boceto` puede apuntar a un boceto de **otro** proyecto, y el motor lo ejecuta contra

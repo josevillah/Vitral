@@ -1,8 +1,19 @@
 # Contrato · panel de terminal en Tauri
 
+> **Este contrato NO se retira al cerrar una tanda.** Es permanente, como
+> `corrida.md` y como `motor.md`: describe una superficie viva, no una tanda
+> entregada. Se corrige en sitio cuando el codigo lo desmiente, y sigue viajando en
+> los prompts de las tandas que declaren `panel-pty.md` en sus `plomos`.
+
 Este es el contrato permanente de la interfaz, como `motor.md` lo es del motor. No
 es el plomo de una tanda: sobrevive a las tandas y se corrige cuando el codigo
 desmiente algo de aqui.
+
+La linea de arriba dice lo mismo, y esta ahi porque **el paso 2 del cierre de una
+tanda no puede depender de que alguien lea tres parrafos y juzgue.** `corrida.md`
+nacio diciendo de si mismo que se retiraba, dejo de ser verdad, y la frase se quedo
+dos tandas. Ahora los tres contratos permanentes lo declaran igual, en el mismo sitio
+y con las mismas palabras.
 
 **Vive en su propio directorio a proposito.** El boceto es `.vitral/ui/boceto.json` y
 este es el unico plomo que lo acompana, asi que las corridas de interfaz se lanzan
