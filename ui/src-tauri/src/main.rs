@@ -2,8 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -47,6 +48,14 @@ const RECIENTE: u64 = 1_000;
 /// del `powershell.exe` del panel, asi que este filtro no llega a dispararse. Se
 /// deja porque el contrato lo pide y porque no cuesta nada, no porque haga falta.
 const HOSTS: [&str; 2] = ["conhost.exe", "openconsole.exe"];
+
+/// El motor de una corrida, lanzado **con una tuberia normal, sin PTY y sin
+/// shell**. Un PTY es un emulador de terminal: renderiza los bytes en un buffer de
+/// N columnas y parte las lineas al ancho. Medido contra el boceto de la interfaz,
+/// la linea mas larga del flujo son 86.690 caracteres, asi que por un PTY llegaria
+/// troceada y con secuencias de escape dentro.
+const NODE: &str = "node";
+const MOTOR: &str = "vitral.mjs";
 
 struct Panel {
     escritor: Box<dyn Write + Send>,
@@ -98,6 +107,41 @@ struct Uso {
 struct Ocupados {
     ids: Vec<String>,
 }
+
+/// `corrida:linea`: una linea completa de la salida del motor, **texto plano y tal
+/// cual**. No es base64 —el base64 de `panel:salida` existe porque un caracter
+/// UTF-8 puede partirse entre dos lecturas del PTY, y aqui el lector ya entrega
+/// lineas enteras— y no lleva ningun campo del JSON desmenuzado: quien conoce el
+/// catalogo de eventos del motor es `ui/web/corrida.js`, y nadie mas.
+#[derive(Clone, Serialize)]
+struct Linea {
+    proyecto: String,
+    linea: String,
+}
+
+/// `corrida:fin`: una vez por corrida, pase lo que pase, como `panel:fin`.
+#[derive(Clone, Serialize)]
+struct FinCorrida {
+    proyecto: String,
+    codigo: i32,
+}
+
+/// `corridas:activas`: **la lista completa** en cada latido, no las altas y bajas.
+/// Es la hermana de `paneles:ocupados`, y el frontend enciende el indicador de un
+/// proyecto si aparece en cualquiera de las dos.
+#[derive(Clone, Serialize)]
+struct Activas {
+    proyectos: Vec<String>,
+}
+
+/// Las corridas en marcha, direccionadas por su proyecto: una corrida se direcciona
+/// por su proyecto como un panel por su `id`. **No hay ningun "proyecto de la
+/// corrida" global**, ni aqui ni en JavaScript.
+///
+/// La clave es la ruta normalizada en minuscula, porque esto es Windows; el valor es
+/// la ruta normalizada tal cual se emite, que es la forma que el frontend tiene en
+/// su lista.
+struct Corridas(Mutex<HashMap<String, String>>);
 
 /// Lo que hay dentro de `estado.json`: rutas y preferencias, nada calculado.
 /// Ningun campo lleva `#[serde(default)]` a proposito: si en el archivo falta uno,
@@ -152,6 +196,13 @@ fn abrir_almacen(estado: &Persistido) -> Result<MutexGuard<'_, Almacen>, String>
         .0
         .lock()
         .map_err(|_| "la lista de proyectos quedo envenenada".to_string())
+}
+
+fn abrir_corridas(estado: &Corridas) -> Result<MutexGuard<'_, HashMap<String, String>>, String> {
+    estado
+        .0
+        .lock()
+        .map_err(|_| "el estado de las corridas quedo envenenado".to_string())
 }
 
 /// Un `PtySize` con ceros no es valido: se manda un minimo de 1.
@@ -674,6 +725,15 @@ fn matar_los_de(estado: &State<'_, Paneles>, cwd: &str) -> Result<(), String> {
 
 /// Al cerrar la ventana se mata todo lo que quede vivo: un `powershell.exe`
 /// huerfano que sobrevive a la ventana es un fallo, no un detalle.
+///
+/// **Los paneles, y solo los paneles.** El proceso del motor de una corrida no se
+/// mata, y no es un descuido: un panel huerfano no deja nada y nadie lo ve, mientras
+/// que una corrida huerfana termina su trabajo y lo deja escrito en `.vitral/`
+/// —handoffs, logs e historial—, porque el motor esta hecho para correr headless
+/// desde una terminal. Matarlo tampoco serviria de mucho sin `taskkill /T`: en
+/// Windows el hijo directo de cada agente es `cmd.exe`, asi que matar `node` dejaria
+/// vivos a los agentes. El precio esta escrito en el contrato: al reabrir la
+/// ventana, esa corrida es invisible.
 fn matar_todos(app: &AppHandle) {
     let estado: State<'_, Paneles> = app.state();
     // El Result se ata a un local para que se suelte antes que `estado`.
@@ -683,6 +743,220 @@ fn matar_todos(app: &AppHandle) {
             let _ = panel.verdugo.kill();
         }
     }
+}
+
+// --- El modo corrida -------------------------------------------------------
+//
+// Las dos mitades ya existian: el motor emite eventos JSON con `--json`, y la
+// ventana abre paneles con `cwd`. Esto las une, y **nada mas**: el motor decide y
+// la ventana mira. No se reimplementa la orquestacion, no se lanza el planificador,
+// y no se puede intervenir una corrida en marcha —ni abortar, ni pausar, ni
+// reanudar—, porque el motor no ofrece nada de eso hoy y aqui no se inventa.
+//
+// **Rust no interpreta.** Reenvia la linea tal cual y no parsea ni un campo. Es el
+// mismo reparto que ya existe con el PTY: alli Rust emite bytes y xterm interpreta;
+// aqui Rust emite lineas y `ui/web/corrida.js` interpreta. Con eso el catalogo IPC
+// gana dos eventos y no quince, y el catalogo de eventos del motor vive en un solo
+// archivo. Si alguien se encuentra mirando dentro de una linea desde aqui, se salio
+// del contrato.
+
+/// La ruta absoluta del motor.
+///
+/// El plomo pide "la ruta absoluta a `vitral.mjs`" y no dice de donde sale, asi que
+/// sale de aqui: `CARGO_MANIFEST_DIR` es `ui/src-tauri`, y dos niveles mas arriba
+/// esta la raiz del repositorio con `vitral.mjs` al lado. Se fija en tiempo de
+/// compilacion a proposito, que es la via que no anade ni una dependencia, ni un
+/// archivo de configuracion, ni un argumento mas al comando —`lanzar_corrida`
+/// recibe `proyecto` y `seco`, y nada mas—, y que vale para lo unico que hay hoy:
+/// `cargo tauri dev` y `cargo build` sobre este checkout, que no se empaqueta en
+/// ningun instalador (`bundle.active` es `false`).
+///
+/// Si el binario acabara sin el repositorio al lado, esto devuelve `Err` con la
+/// ruta que busco, que se pinta como cualquier otro error y no deja la ventana en
+/// blanco.
+fn ruta_del_motor() -> Result<PathBuf, String> {
+    let raiz = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| format!("no se encontro la raiz del motor \"{MOTOR}\""))?;
+    let motor = raiz.join(MOTOR);
+    if !motor.is_file() {
+        return Err(format!("no se encontro el motor en \"{}\"", motor.display()));
+    }
+    Ok(motor)
+}
+
+/// Lanza una tanda en el proyecto activo y vuelve en cuanto el proceso arranca.
+///
+/// `proyecto` es la ruta **absoluta** del proyecto, igual que el `cwd` de un panel:
+/// la raiz sale del cwd, que es la primitiva del motor, y el boceto es siempre
+/// `.vitral/boceto.json` de ahi dentro. No se elige, no se busca y no se enumera
+/// nada del proyecto; si no existe, el motor devuelve su propio error por el flujo
+/// y se pinta como cualquier otro.
+#[tauri::command(async)]
+fn lanzar_corrida(
+    app: AppHandle,
+    corridas: State<'_, Corridas>,
+    proyecto: String,
+    seco: bool,
+) -> Result<(), String> {
+    let destino = normalizar(&proyecto);
+    let clave = destino.to_lowercase();
+    let motor = ruta_del_motor()?;
+
+    // El mapa se toma **antes** de lanzar nada: entre comprobar y lanzar no puede
+    // colarse una segunda corrida del mismo proyecto. Es lo mismo que hace
+    // `abrir_panel` con un id repetido, y aqui tampoco se lanza un segundo proceso.
+    let mut mapa = abrir_corridas(&corridas)?;
+    if mapa.contains_key(&clave) {
+        return Err(format!("ya hay una corrida en marcha en \"{destino}\""));
+    }
+
+    // Una tuberia normal, sin PTY y sin shell. `--seco` va delante de `--json` si
+    // toca: el boton de lanzar corre el ensayo antes que la corrida real, que no
+    // gasta un centimo y es donde saltan los guardarrailes. La persona ve el
+    // resultado y decide, asi que aqui **no se encadena la corrida real sola**.
+    let mut orden = Command::new(NODE);
+    orden.arg(&motor);
+    if seco {
+        orden.arg("--seco");
+    }
+    orden
+        .arg("--json")
+        .current_dir(&destino)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // Un `proyecto` que no existe tambien cae aqui, con el texto del sistema: a
+    // diferencia de `portable-pty`, `Command` no descarta en silencio un directorio
+    // malo para arrancar en el home del usuario.
+    let mut hijo = orden
+        .spawn()
+        .map_err(|e| format!("no se pudo lanzar \"{NODE}\": {e}"))?;
+
+    // Recien lanzado y con las dos tuberias pedidas, esto no puede ser `None`. Si
+    // alguna vez lo fuera, el comando devuelve `Err` en vez de entrar en panic, y el
+    // proceso queda como una corrida huerfana, que es lo que el contrato ya acepta.
+    let (Some(salida), Some(mut error)) = (hijo.stdout.take(), hijo.stderr.take()) else {
+        return Err("no se pudieron tomar las tuberias del motor".to_string());
+    };
+
+    // stderr va por tuberia porque lo pide el plomo, y **hay que vaciarlo**: una
+    // tuberia que se llena bloquea al que escribe, y un motor bloqueado a mitad de
+    // una linea de stderr no volveria nunca. El catalogo no tiene ningun evento de
+    // stderr y aqui no se inventa, asi que se lee y se descarta.
+    std::thread::spawn(move || {
+        let mut vertedero = Vec::new();
+        let _ = error.read_to_end(&mut vertedero);
+    });
+
+    // Hilo lector: **un trozo de la tuberia no es una linea**. Medido contra el
+    // boceto de la interfaz, llegaron 7 trozos para 5 lineas y 3 de esos trozos no
+    // contenian ni un salto de linea. Asi que se acumula en un buffer, se corta por
+    // `\n` y se emiten **solo lineas completas**; lo que quede sin `\n` se guarda
+    // para el trozo siguiente. `read_until` es exactamente eso, hecho por std.
+    let app_lector = app.clone();
+    let proyecto_lector = destino.clone();
+    let hilo_lector = std::thread::spawn(move || {
+        let mut tuberia = BufReader::new(salida);
+        let mut cruda: Vec<u8> = Vec::new();
+        loop {
+            cruda.clear();
+            match tuberia.read_until(b'\n', &mut cruda) {
+                Ok(0) => break,
+                Ok(_) => {
+                    // Al cerrarse la tuberia, un resto sin salto de linea **se
+                    // descarta**: es un flujo truncado, no un evento.
+                    if cruda.last() != Some(&b'\n') {
+                        break;
+                    }
+                    cruda.pop();
+                    if cruda.last() == Some(&b'\r') {
+                        cruda.pop();
+                    }
+                    // Una linea vacia no es un evento, y tampoco es una de esas
+                    // lineas que no parsean que la corrida cuenta y ensena en su
+                    // detalle: emitirla inflaria esa cuenta con ruido. Verlo es
+                    // enmarcado, no lectura; no hace falta saber nada del JSON.
+                    if cruda.is_empty() {
+                        continue;
+                    }
+                    let carga = Linea {
+                        proyecto: proyecto_lector.clone(),
+                        // Lineas enteras, asi que no hay ningun caracter UTF-8
+                        // partido que arrastrar de una lectura a la siguiente. Por
+                        // eso esto es texto y no base64.
+                        linea: String::from_utf8_lossy(&cruda).into_owned(),
+                    };
+                    if app_lector.emit("corrida:linea", carga).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    mapa.insert(clave.clone(), destino.clone());
+    // El bloqueo se suelta antes de arrancar el vigia, que va a querer tomarlo.
+    drop(mapa);
+
+    // Hilo vigia, con el mismo reparto que el de un panel y por la misma razon: es
+    // el unico que emite la linea de cierre, y la emite **exactamente una vez**,
+    // pase lo que pase.
+    let app_vigia = app;
+    std::thread::spawn(move || {
+        // 1. El codigo de salida. Si `wait()` fallara —no deberia—, se emite igual
+        //    con codigo 1: el contrato promete que `corrida:fin` siempre sale, y
+        //    vale mas un codigo aproximado que una corrida que se queda muda.
+        let codigo = hijo
+            .wait()
+            .ok()
+            .and_then(|estado| estado.code())
+            .unwrap_or(1);
+
+        // 2. Esperar al lector. Cerrar el extremo de escritura no descarta lo ya
+        //    escrito, asi que las ultimas lineas siguen en la tuberia: sin este
+        //    `join`, `corrida:fin` saldria por delante de ellas.
+        let _ = hilo_lector.join();
+
+        // 3. Y solo ahora se libera el proyecto. Soltarlo antes del `join` dejaria
+        //    arrancar una corrida nueva mientras la vieja todavia emite lineas con
+        //    ese mismo `proyecto`, y las dos se mezclarian en el frontend.
+        {
+            let estado: State<'_, Corridas> = app_vigia.state();
+            let mut mapa = match estado.0.lock() {
+                Ok(mapa) => mapa,
+                Err(envenenado) => envenenado.into_inner(),
+            };
+            mapa.remove(&clave);
+        }
+
+        // 4. La linea de cierre, detras de toda la salida y no en medio.
+        let _ = app_vigia.emit(
+            "corrida:fin",
+            FinCorrida {
+                proyecto: destino,
+                codigo,
+            },
+        );
+    });
+
+    Ok(())
+}
+
+/// Los proyectos con una corrida en marcha: la lista entera, para el latido.
+fn activas(app: &AppHandle) -> Vec<String> {
+    let estado: State<'_, Corridas> = app.state();
+    let mut proyectos: Vec<String> = match estado.0.lock() {
+        Ok(mapa) => mapa.values().cloned().collect(),
+        Err(_) => return Vec::new(),
+    };
+    // El orden de un `HashMap` cambia entre latidos. El frontend usa esto como
+    // conjunto, asi que da igual, pero ordenarlo no cuesta nada y evita que alguien
+    // acabe apoyandose en un orden que no existe.
+    proyectos.sort();
+    proyectos
 }
 
 // --- El uso de la maquina y la senal de actividad ---------------------------
@@ -895,6 +1169,16 @@ fn latido(app: AppHandle, minimizada: Arc<AtomicBool>) {
         // sustituye la suya entera y no lleva contabilidad propia, asi que una lista
         // vacia es justo lo que apaga los indicadores.
         let _ = app.emit("paneles:ocupados", Ocupados { ids: ocupados(&app) });
+
+        // Y la hermana de la anterior, en **este mismo hilo**: el contrato pide un
+        // solo temporizador, no uno por metrica. Tambien la lista completa, y
+        // tambien cuando esta vacia, que es justo lo que apaga los indicadores.
+        let _ = app.emit(
+            "corridas:activas",
+            Activas {
+                proyectos: activas(&app),
+            },
+        );
     }
 }
 
@@ -911,6 +1195,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Paneles(Mutex::new(HashMap::new())))
         .manage(Persistido(Mutex::new(Almacen::default())))
+        .manage(Corridas(Mutex::new(HashMap::new())))
         .setup(move |app| {
             // Se lee una vez al arrancar, y solo aqui.
             let cargado = cargar(app.handle());
@@ -919,8 +1204,8 @@ fn main() {
                 *almacen = cargado;
             }
 
-            // El unico hilo temporizador, que emite `maquina:uso` y
-            // `paneles:ocupados`. Uno, no uno por metrica.
+            // El unico hilo temporizador, que emite `maquina:uso`,
+            // `paneles:ocupados` y `corridas:activas`. Uno, no uno por metrica.
             let app_latido = app.handle().clone();
             std::thread::spawn(move || latido(app_latido, minimizada_latido));
             Ok(())
@@ -940,7 +1225,8 @@ fn main() {
             leer_estado,
             anadir_proyecto,
             quitar_proyecto,
-            guardar_preferencias
+            guardar_preferencias,
+            lanzar_corrida
         ])
         .run(tauri::generate_context!())
         .expect("no se pudo arrancar la aplicacion de tauri");

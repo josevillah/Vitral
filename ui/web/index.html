@@ -94,6 +94,35 @@
         --ind-oliva: #5c7a12;
         --ind-ambar: #9a7b16;
 
+        /* --------- los siete estados de un vidrio ---------
+
+           Todo nace dentro de Pergamino, y estos siete son lo unico derivado: se
+           bajaron como se bajo `activo-ruta`, hasta que se leen sobre la barra.
+
+           LA FORMA LLEVA EL ESTADO Y EL COLOR LO REFUERZA, no al reves, y hay un
+           numero detras: `ok` contra `FALLO` esta medido a 1.83 : 1, el peor par de
+           los veintiuno. Verde oscuro y rojo oscuro tienen casi la misma luminancia
+           y se separan por tono, que ademas es el fallo clasico de daltonismo. Y ES
+           EL TECHO: con el verde de partida `#3d6410` el par estaba en 1.13, y pasar
+           de 2 exigia aclarar el FALLO a `#c62828`, que cae a 4.39 sobre pergamino,
+           por debajo del minimo. Por eso la marca de `ok` y la de `FALLO` no se
+           parecen en nada aunque su luminancia si. El segundo par es `saltada`
+           contra `no llego a correr`, a 1.16, y se resuelve igual.
+
+           Los tres ultimos van POR DEBAJO DE 4.5 A PROPOSITO, como `no-disponible`,
+           que ya esta contratado a 2.14: son estados sin resultado y tienen que
+           verse apagados. Los tres que traen resultado pasan el minimo.
+
+           `v-fallo` vale lo mismo que `error-barra` y es otro token a proposito: uno
+           es "el mensaje de la lista fallo" y el otro "esta tarea fallo". Si algun
+           dia uno de los dos se mueve, el otro no tiene por que moverse con el. */
+        --v-esperando: #8a8270; /* 2.98 */
+        --v-ok: #16300a; /* 11.21 */
+        --v-fallo: #a01c1c; /* 6.12 */
+        --v-cortada: #8a5a0c; /* 4.62 */
+        --v-saltada: #a39c84; /* 2.14 */
+        --v-nunca: #b0a894; /* 1.85 */
+
         --fuente-barra: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
         --fuente-mono: 'Cascadia Mono', Consolas, monospace;
       }
@@ -171,14 +200,32 @@
         align-items: center;
         justify-content: space-between;
         height: 32px;
+        gap: 4px;
         padding: 0 8px 0 16px;
       }
 
+      /* `flex: 1` para que el rotulo se coma el hueco y los dos botones queden
+         juntos a la derecha, en vez de repartirse la fila con `space-between`. */
       #titulo {
+        flex: 1 1 auto;
         color: var(--texto-tenue);
         font-size: 11px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
+      }
+
+      /* Una corrida en marcha no se puede intervenir: ni abortar, ni pausar, ni
+         reanudar. El motor no ofrece nada de eso hoy y aqui no se inventa, asi que
+         mientras corre el boton se apaga en vez de cambiar de significado. Y apagado
+         no responde al hover: seria prometer que hace algo. */
+      .icono:disabled {
+        color: var(--no-disponible);
+        cursor: default;
+      }
+
+      .icono:disabled:hover {
+        background: transparent;
+        color: var(--no-disponible);
       }
 
       #lista {
@@ -495,6 +542,244 @@
         opacity: 1;
       }
 
+      /* ------------------------------------------------- las filas de un vidrio */
+
+      /* UN VIDRIO NO ES UN PANEL: es una fila en la barra. No tiene teclado, no
+         tiene PTY, no tiene salida en vivo y no hay nada que redimensionar. El
+         flujo del motor no lleva ni un byte de lo que escribe un agente, asi que
+         abrirle un PTY seria un terminal vacio durante minutos.
+
+         Las filas van DEBAJO DE LA FILA DEL PROYECTO ACTIVO y solo ahi: un proyecto
+         que no esta activo no ensena sus vidrios, igual que no ensena sus paneles.
+
+         Se desplaza LA LISTA DE VIDRIOS, no la de proyectos. El tope de alto no
+         esta en el contrato y sale de la unica medida que si esta: ocho filas de
+         28px. Con mas, esta caja lleva su propia barra de desplazamiento y la lista
+         de proyectos se queda quieta, que es lo que pide el borde. */
+      .vidrios {
+        max-height: 224px;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+
+      /* La entrada de una fila. LAS FILAS ENTRAN COMO UN BLOQUE: el escalonado es
+         CERO y no es pereza, escalonar mentiria. Las filas no aparecen cuando
+         arrancan los vidrios; aparecen cuando el motor dice de golpe los ids de
+         TODAS las tareas de TODAS las olas. La entrada ocurre una vez por corrida y
+         las seis filas son un solo hecho. Un escalonado insinuaria un orden de
+         llegada que no existe: dentro de una ola tampoco lo hay, porque el motor
+         lanza con `Promise.all`.
+
+         Los 220ms salen de mirar tres pasos -120, 220, 400- sobre la fila real: por
+         debajo de 100 no se lee como movimiento sino como un salto, y por encima de
+         400 estorba. Son convencion de interfaz, no medida de este repositorio.
+
+         La transicion se declara en `.dentro` y no en `.v` a proposito: asi anima al
+         entrar y no al salir, y asi el bloque de `prefers-reduced-motion` la apaga
+         con el mismo selector que trae escrito el contrato. */
+      .v {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+
+      .v.dentro {
+        opacity: 1;
+        transform: none;
+        transition:
+          opacity 220ms ease-out,
+          transform 220ms ease-out;
+      }
+
+      /* Alto 28, sangria izquierda 30, relleno derecho 12 y hueco de 8 entre marca,
+         id y datos. El 30 esta fuera de la escala 4/8/12/16/24 y entra igual: es un
+         valor del contrato, y el contrato manda sobre la escala.
+
+         SIN FONDO PROPIO Y SIN HOVER, a proposito: no es un control de navegacion
+         como la fila de un proyecto. Se pulsa para abrir su detalle y nada mas. Es
+         un `button` para que llegue por el tabulador y por Enter sin inventar nada,
+         no para que se vea como un boton. */
+      .v-fila {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        box-sizing: border-box;
+        width: 100%;
+        height: 28px;
+        padding: 0 12px 0 30px;
+        border: 0;
+        background: transparent;
+        font-family: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .v-fila:hover {
+        background: transparent;
+      }
+
+      /* El id de la tarea. Se corta por la derecha si no cabe: aqui no hay nada
+         generico a la izquierda que perder, al reves que en una ruta. */
+      .v-id {
+        flex: 0 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        color: var(--texto);
+        font-size: 11px;
+        line-height: 1;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
+      /* `tabular-nums` porque son cifras que cambian en su sitio: sin el, un tiempo
+         que pasa de 9s a 10s mueve todo lo que tiene detras. */
+      .v-datos {
+        flex: 0 0 auto;
+        color: var(--texto-tenue);
+        font-size: 10px;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* La caja de la marca. Mide 14x14 porque es lo que mide la mas grande -los
+         cuatro cuadros de `en curso`- y asi los ids de todas las filas caen en la
+         misma columna aunque la marca cambie de tamano.
+
+         Las marcas se apilan encima con `position: absolute` para poder FUNDIRSE
+         CRUZADAS: la que se va y la que llega ocupan el mismo sitio a la vez, asi
+         que la fila no se mueve ni un pixel. Mover la fila haria saltar las de
+         abajo, y en una lista de proyectos eso es ruido caro. Ademas el cambio ya
+         trae una senal fuerte gratis: `en curso` es lo unico que se mueve
+         continuamente, asi que pasar a `ok` es pasar de moverse a estarse quieto. */
+      .caja {
+        position: relative;
+        flex: 0 0 14px;
+        width: 14px;
+        height: 14px;
+      }
+
+      .caja .m {
+        position: absolute;
+        left: 0;
+        top: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px;
+        height: 14px;
+      }
+
+      /* Los tres pasos del fundido: `entra` es el estado de partida sin transicion,
+         `entra2` es el de llegada con ella, y `sale` es la marca vieja apagandose.
+         La que se va no se come ningun clic mientras se desvanece. */
+      .caja .entra {
+        opacity: 0;
+      }
+
+      .caja .entra2 {
+        opacity: 1;
+        transition: opacity 220ms ease-out;
+      }
+
+      .caja .sale {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 220ms ease-out;
+      }
+
+      /* esperando · circulo hueco, borde 1.5px, 9x9 */
+      .m.espera::before {
+        content: '';
+        box-sizing: border-box;
+        width: 9px;
+        height: 9px;
+        border: 1.5px solid var(--v-esperando);
+        border-radius: 50%;
+      }
+
+      /* saltada · guion de 10x2 */
+      .m.salta::before {
+        content: '';
+        width: 10px;
+        height: 2px;
+        background: var(--v-saltada);
+      }
+
+      /* cortada · cuadro de 10x10 con borde 1.5px, MEDIO LLENO POR LA IZQUIERDA.
+         Es la unica marca que dice "iba por la mitad y se corto" sin escribirlo. */
+      .m.corta::before {
+        content: '';
+        box-sizing: border-box;
+        width: 10px;
+        height: 10px;
+        border: 1.5px solid var(--v-cortada);
+        background: linear-gradient(to right, var(--v-cortada) 0 50%, transparent 50% 100%);
+      }
+
+      /* Las tres de trazo -ok, FALLO y no llego a correr- son SVG, y pintan con
+         `currentColor`: el color lo pone la clase, que es donde estan los tokens. */
+      .m.bien {
+        color: var(--v-ok);
+      }
+
+      .m.falla {
+        color: var(--v-fallo);
+      }
+
+      .m.nunca {
+        color: var(--v-nunca);
+      }
+
+      /* en curso · LOS CUATRO CUADROS QUE YA GIRAN EN EL INDICADOR, con sus mismos
+         colores, su mismo ciclo de 1.6s y su mismo recorrido por el anillo. No se
+         inventa otra animacion: el elemento lleva tambien la clase `indicador`, asi
+         que hereda tal cual las cuatro reglas de `nth-child` de arriba, retardos
+         incluidos.
+
+         Lo unico que se cambia es EL COLOR DE REPOSO. `.indicador i` parte de
+         `ind-apagado` porque en la fila de un proyecto el indicador o gira o no
+         esta; aqui la marca tiene que seguir diciendo `en curso` con la animacion
+         apagada, asi que cada cuadro parte ya de su color del anillo. Mientras la
+         animacion corre gana ella -una animacion pisa a la declaracion normal- y se
+         ve exactamente igual que el indicador de un proyecto; con
+         `prefers-reduced-motion` se queda esto, que es lo que hace que no se pierda
+         ni un estado al apagar el movimiento. */
+      .m.curso i:nth-child(1),
+      .m.curso i:nth-child(4) {
+        background-color: var(--ind-oliva);
+      }
+
+      .m.curso i:nth-child(2),
+      .m.curso i:nth-child(3) {
+        background-color: var(--ind-ambar);
+      }
+
+      /* NO ES UNA OPCION NI UNA MEJORA: ES PARTE DE LA ENTREGA. Se apagan las tres
+         -la entrada de la fila, el fundido de la marca y los cuatro cuadros-, y con
+         ellas apagadas no se pierde ni un estado. Es la ventaja de haber resuelto el
+         par de 1.83 con formas y no con color: todo sigue siendo legible sin
+         movimiento. `en curso` se queda con los cuatro cuadros quietos y a plena
+         opacidad, que sigue sin parecerse a ninguna de las otras seis marcas.
+
+         En esta maquina `SystemParametersInfo(SPI_GETCLIENTAREAANIMATION)` devuelve
+         `True`, que es el ajuste que Chromium mapea a esta consulta, asi que aqui
+         resuelve a `no-preference`. Para probar el otro caso: F12, Ctrl+Shift+P,
+         "Emulate CSS prefers-reduced-motion: reduce". */
+      @media (prefers-reduced-motion: reduce) {
+        .v.dentro {
+          transition: none;
+        }
+
+        .caja .sale,
+        .caja .entra2 {
+          transition: none;
+        }
+
+        .m.curso i {
+          animation: none;
+          opacity: 1;
+        }
+      }
+
       /* El mensaje de error va debajo de la lista, nunca dentro de una fila. Y en
          `error-barra`, que es de la barra: sobre la rejilla daria 2.49. */
       #error {
@@ -572,6 +857,91 @@
       /* El mismo `#fde047` que el nombre del proyecto activo: no hay dos amarillos. */
       .celda.enfocada {
         border-color: var(--activo-texto);
+      }
+
+      /* ------------------------------------------------ la celda de un vidrio */
+
+      /* ES UNA CELDA COMO CUALQUIER OTRA: cuenta para el tope de cuatro y convive
+         con los paneles de shell en la misma rejilla. Una regla, no dos, y el tope
+         recupera su sentido original, porque quien abre celdas vuelve a ser la
+         persona y no el boceto.
+
+         Va sobre la rejilla, asi que lleva los tokens de la superficie 3 y NINGUNO
+         de la barra: `texto-tenue` y `error-barra` dan aqui 3.07 y 2.49. Y la
+         monoespaciada del contrato a 12px, que no es la del terminal -14- porque
+         esto no es un terminal. */
+      .detalle {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 12px 14px;
+        overflow: auto;
+        background: #0c0c0c;
+        color: #cccccc;
+        font-family: var(--fuente-mono);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      /* Quien dice cual es la celda enfocada es el borde amarillo de `.celda`, el
+         mismo para las dos clases de celda. Un segundo recuadro dentro seria un
+         segundo indicador de foco diciendo lo mismo. */
+      .detalle:focus {
+        outline: none;
+      }
+
+      /* LA ETIQUETA POR VIDRIO LEVANTA LA PROHIBICION SOLO PARA VIDRIOS. El contrato
+         permanente dice que ningun panel lleva etiqueta ni titulo, y sigue siendo
+         cierto para los paneles de shell: ahi el prompt ya dice donde estas y un
+         titulo encima seria ruido duplicado. Un vidrio la necesita porque no tiene
+         prompt ni nadie que sepa que es. */
+      .detalle h1 {
+        margin: 0 0 8px;
+        color: var(--activo-texto);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .detalle dl {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 0 12px;
+        margin: 0;
+      }
+
+      .detalle dt {
+        color: var(--vacio-texto);
+      }
+
+      /* `anywhere` y no `break-word`: una ruta larga sin espacios -o una lista de
+         rutas- desbordaria la columna en una celda estrecha, y la rejilla ya puede
+         ponerse a 59 columnas con cuatro celdas abiertas. */
+      .detalle dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+
+      /* La frase del error, ENTERA: no se recorta ni se resume. `error-rejilla`, que
+         es el rojo de la superficie 3. */
+      .detalle .yerro {
+        margin: 8px 0 0;
+        color: var(--error-rejilla);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      /* Lo que diga el archivo, tal cual, con sus saltos de linea. Es lo unico que
+         esta interfaz lee de `.vitral/`, y por un milimetro: solo lectura, solo
+         `handoffs/<id>.md` del proyecto activo, y solo al pulsar. */
+      .detalle .handoff {
+        margin: 12px 0 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      /* Que no haya handoff no es un error, asi que no va en rojo: va apagado. */
+      .detalle .handoff.sin {
+        color: var(--vacio-texto);
       }
 
       /* Los estados vacios son cinco situaciones distintas y cada una tiene su
@@ -675,6 +1045,14 @@
           <div id="contenido">
             <div id="cabecera">
               <span id="titulo">Proyectos</span>
+              <!-- El boton de lanzar una tanda. El contrato de la tanda dice que
+                   existe -"el boton de lanzar corre el ensayo antes que la corrida
+                   real"- y no dice donde vive; se pone aqui, junto al `+`, porque el
+                   reparto de la fila de un proyecto SI esta contratado al pixel y
+                   meterle un boton mas le quitaria ancho a la ruta. Actua sobre el
+                   proyecto activo, que es el unico que ensena sus vidrios.
+                   Quien decide su rotulo y si esta apagado es `pintarLanzar`. -->
+              <button id="lanzar" class="icono" type="button" hidden>▶</button>
               <button id="anadir" class="icono" type="button" title="Anadir un proyecto">+</button>
             </div>
             <ul id="lista"></ul>

@@ -1,5 +1,21 @@
 import { Terminal } from './vendor/xterm.mjs';
 import { FitAddon } from './vendor/addon-fit.mjs';
+// La forma interna del modo corrida, y LA UNICA PUERTA POR LA QUE ENTRA. Este
+// archivo no conoce el catalogo de eventos del motor: quien lo conoce es
+// `corrida.js`, y nadie mas. El origen unico de ese catalogo es el plomo del motor,
+// que las tandas de interfaz no ven, y copiarlo aqui serian dos catalogos, que
+// divergen. Se comprueba con grep -los nombres de evento del motor tienen que
+// aparecer en un solo archivo de `ui/`- y por eso aqui no hay ni uno, ni siquiera
+// dentro de un comentario.
+//
+// `alCambiar` entrega LA CORRIDA ENTERA YA RECALCULADA, no un parche: esto repinta
+// con lo que recibe y no mantiene su propia copia, que es la misma regla que ya
+// siguen los tres comandos que devuelven `Estado`.
+//
+// Se renombra `olvidar` al importarlo porque `rejillas` tiene un metodo con ese
+// nombre y significan cosas distintas: uno olvida una corrida terminada y el otro
+// los paneles de un proyecto que se quita.
+import { arrancar, alCambiar, olvidar as olvidarCorrida } from './corrida.js';
 
 // Con `withGlobalTauri` la API vive en `window.__TAURI__`. Ojo al `.core`: en
 // Tauri v1 era `window.__TAURI__.invoke` y en v2 ahi ya no hay nada.
@@ -59,6 +75,129 @@ const GIB = 1024 * 1024 * 1024;
 // suspensivos a la izquierda.
 const AISLA_IZQUIERDA = '\u2066';
 const AISLA_FIN = '\u2069';
+
+// Lo que dice la celda de un vidrio que no dejo handoff. No es un error y por eso
+// no va en rojo: va apagado, en `vacio-texto`.
+const SIN_HANDOFF = '\u2014 sin handoff \u2014';
+
+// Los siete estados de un vidrio, y LA CLASE CSS DE SU FORMA. La tabla del contrato
+// es el origen unico de los estados; esta solo los traduce a una clase.
+//
+// LA FORMA LLEVA EL ESTADO Y EL COLOR LO REFUERZA, y hay un numero detras: `ok`
+// contra `FALLO` esta medido a 1.83 : 1 y es el techo, porque los dos son oscuros y
+// se separan por tono, que ademas es el fallo clasico de daltonismo. Por eso la
+// marca de visto y el aspa no se parecen en nada. El segundo par -`saltada` contra
+// `no llego a correr`, a 1.16- se resuelve igual: guion contra circulo tachado.
+const FORMAS = {
+  esperando: 'espera',
+  'en curso': 'curso',
+  ok: 'bien',
+  FALLO: 'falla',
+  cortada: 'corta',
+  saltada: 'salta',
+  'no llego a correr': 'nunca',
+};
+
+// Un estado que no este en la tabla se pinta como `esperando`, que es la marca de
+// "todavia no se sabe". No deberia pasar -la tabla es el origen unico- y dejar la
+// caja vacia seria peor: una fila sin marca no se distingue de una fila rota.
+const FORMA_POR_DEFECTO = 'espera';
+
+// Los dos rotulos del boton de lanzar. El hueco es el ensayo y el macizo la corrida
+// de verdad: la misma disciplina que los siete estados, la forma antes que el color,
+// en un boton de 24px donde no cabe texto.
+const LANZAR_SECO = '\u25b7';
+const LANZAR_REAL = '\u25b6';
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+// El fundido de la marca dura 220ms; la vieja se quita un poco despues. No se espera
+// a `transitionend` a proposito: con `prefers-reduced-motion` no hay transicion y por
+// tanto no hay evento, y la marca vieja se quedaria en el DOM para siempre.
+const FUNDIDO_MS = 220;
+const RETIRADA_MS = FUNDIDO_MS + 40;
+
+/// Milisegundos a algo que se lee de un vistazo en una fila de 28px.
+function tiempo(ms) {
+  const segundos = Math.round(ms / 1000);
+  if (segundos < 60) return `${segundos}s`;
+  return `${Math.floor(segundos / 60)}m ${String(segundos % 60).padStart(2, '0')}s`;
+}
+
+/// El coste de una tarea. Dos decimales: el motor da seis y en una fila de barra
+/// las cuatro ultimas son ruido.
+function coste(usd) {
+  const cifra = usd.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `$${cifra}`;
+}
+
+/// Las tres marcas de trazo: la de visto, el aspa y el circulo tachado. Pintan con
+/// `currentColor`, asi que el color lo pone la clase del `.m` y los tokens se quedan
+/// todos en el CSS, que es donde estan medidos.
+function trazo(forma) {
+  const dibujo = document.createElementNS(SVG, 'svg');
+  dibujo.setAttribute('viewBox', '0 0 12 12');
+  dibujo.setAttribute('width', '12');
+  dibujo.setAttribute('height', '12');
+  dibujo.setAttribute('aria-hidden', 'true');
+  dibujo.setAttribute('fill', 'none');
+  dibujo.setAttribute('stroke', 'currentColor');
+  dibujo.setAttribute('stroke-linecap', 'round');
+  dibujo.setAttribute('stroke-linejoin', 'round');
+
+  const linea = (d, grosor) => {
+    const camino = document.createElementNS(SVG, 'path');
+    camino.setAttribute('d', d);
+    camino.setAttribute('stroke-width', String(grosor));
+    dibujo.append(camino);
+  };
+
+  if (forma === 'bien') {
+    // ok \u00b7 marca de visto, trazo 2px
+    linea('M1.6 6.4 L4.6 9.4 L10.4 2.8', 2);
+  } else if (forma === 'falla') {
+    // FALLO \u00b7 aspa maciza, trazo 2px, 10x10 dentro de la caja de 12
+    linea('M1 1 L11 11 M11 1 L1 11', 2);
+  } else {
+    // no llego a correr \u00b7 circulo hueco TACHADO EN DIAGONAL. Es lo que lo separa de
+    // `esperando`, que es el mismo circulo sin tachar: una tarea que nunca va a
+    // correr y una que espera su turno se ven igual si no se dibuja esta raya, y son
+    // cosas muy distintas.
+    const circulo = document.createElementNS(SVG, 'circle');
+    circulo.setAttribute('cx', '6');
+    circulo.setAttribute('cy', '6');
+    circulo.setAttribute('r', '4.25');
+    circulo.setAttribute('stroke-width', '1.5');
+    dibujo.append(circulo);
+    linea('M2.6 9.4 L9.4 2.6', 1.5);
+  }
+
+  return dibujo;
+}
+
+/// La marca de un estado. Es lo unico que se funde cuando un vidrio cambia: la fila
+/// no se mueve, porque mover la fila haria saltar las de abajo y en una lista de
+/// proyectos eso es ruido caro.
+function marca(estado) {
+  const forma = FORMAS[estado] ?? FORMA_POR_DEFECTO;
+  const caja = document.createElement('span');
+  caja.className = `m ${forma}`;
+  caja.setAttribute('aria-hidden', 'true');
+
+  if (forma === 'curso') {
+    // Los mismos cuatro cuadros que ya giran en la fila de un proyecto, con sus
+    // mismos colores, su mismo ciclo de 1.6s y su mismo recorrido por el anillo. No
+    // se inventa otra animacion. Va anidado y no en el propio `.m` porque `.caja .m`
+    // fija `display: flex` y `.indicador` necesita el suyo de rejilla.
+    caja.append(indicador());
+  } else if (forma === 'bien' || forma === 'falla' || forma === 'nunca') {
+    caja.append(trazo(forma));
+  }
+  // `espera`, `salta` y `corta` las dibuja el CSS con un `::before`: son un circulo,
+  // un guion y un cuadro medio lleno, y no hace falta un SVG para eso.
+
+  return caja;
+}
 
 /// El PTY manda bytes en base64 justo para que un caracter UTF-8 partido entre dos
 /// lecturas no se pierda: quien lo junta es xterm, que recibe bytes y no texto.
@@ -259,6 +398,136 @@ class Panel {
   }
 }
 
+/// La celda de detalle de un vidrio. ES UNA CELDA COMO CUALQUIER OTRA: cuenta para
+/// el tope de cuatro y convive con los paneles de shell en la misma rejilla. Una
+/// regla, no dos, y asi el tope recupera su sentido original, porque quien abre
+/// celdas vuelve a ser la persona y no el boceto.
+///
+/// Ofrece los mismos cuatro metodos que `Panel` -`reajustar`, `enfocar`, `cerrar` y
+/// nada mas- porque la rejilla no distingue entre las dos: guarda piezas, no
+/// paneles. Un vidrio no tiene PTY, asi que `reajustar` no tiene nada que hacer.
+class Detalle {
+  constructor(clave, ruta, id, celda) {
+    this.clave = clave;
+    this.ruta = ruta;
+    this.id = id;
+    this.celda = celda;
+    this.cerrado = false;
+    /// El texto del handoff. `undefined` mientras se lee, `null` si no hay, y la
+    /// cadena entera si lo hay. Se lee UNA VEZ, al abrir la celda: el contrato dice
+    /// "solo lectura, y solo al pulsar un vidrio", y "se lee al abrir la celda, no
+    /// antes". Ni se precarga al terminar una tarea ni se vuelve a mirar en cada
+    /// repintado, que serian las dos formas de convertir esto en vigilar `.vitral/`.
+    this.handoff = undefined;
+    /// Lo ultimo que se pinto, para poder repintar sin que el que llama tenga que
+    /// volver a buscarlo.
+    this.vidrio = null;
+
+    this.caja = document.createElement('div');
+    this.caja.className = 'detalle';
+    // Para que el foco de la celda sea de verdad y no solo un borde amarillo: sin
+    // esto el borde diria que manda esta celda mientras el teclado sigue yendo al
+    // terminal de al lado.
+    this.caja.tabIndex = -1;
+    celda.append(this.caja);
+
+    this.leerHandoff();
+  }
+
+  /// LO UNICO QUE ESTA INTERFAZ LEE DE `.vitral/`, y por un milimetro:
+  /// `handoffs/<id>.md` del proyecto activo, solo lectura. Ni logs, ni boceto, ni
+  /// historial, ni marcas de incompleto.
+  ///
+  /// Si no se puede leer, la celda dice "sin handoff" y no es un error: el caso
+  /// normal es justo ese, una tarea que no dejo ninguno. La contrapartida, dicha
+  /// para que no se lea como un olvido: un fallo de lectura de verdad se ve igual
+  /// que un archivo que no existe.
+  async leerHandoff() {
+    try {
+      const contenido = await invoke('leer_handoff', { proyecto: this.ruta, id: this.id });
+      this.handoff = typeof contenido === 'string' && contenido.length > 0 ? contenido : null;
+    } catch {
+      this.handoff = null;
+    }
+    if (!this.cerrado) this.pintar(this.vidrio);
+  }
+
+  /// Repinta con el vidrio que llega, entero. No se guarda una copia propia que
+  /// luego diverja: es la misma regla que siguen los tres comandos de `Estado`.
+  pintar(vidrio) {
+    if (this.cerrado) return;
+    this.vidrio = vidrio;
+
+    const titulo = document.createElement('h1');
+    // `<id> · <estado>`. La etiqueta por vidrio levanta la prohibicion del contrato
+    // permanente SOLO PARA VIDRIOS: los paneles de shell siguen sin ella, porque ahi
+    // el prompt ya dice donde estas. Un vidrio la necesita porque no tiene prompt ni
+    // nadie que sepa que es.
+    titulo.textContent = vidrio === null ? this.id : `${this.id} · ${vidrio.estado}`;
+
+    const datos = document.createElement('dl');
+    // Los siete rotulos del contrato, en su orden y con sus nombres. Los campos
+    // siempre estan: un dato ausente es `null` o `[]`, nunca un campo que falta, asi
+    // que aqui no hace falta preguntar si existe, solo si trae algo.
+    const campos = [
+      ['agente', vidrio === null ? null : vidrio.agente],
+      ['rutas', vidrio === null ? null : vidrio.rutas],
+      ['tiempo', vidrio !== null && Number.isFinite(vidrio.ms) ? tiempo(vidrio.ms) : null],
+      ['coste', vidrio !== null && Number.isFinite(vidrio.costo) ? coste(vidrio.costo) : null],
+      ['turnos', vidrio === null ? null : vidrio.turnos],
+      ['motivo', vidrio === null ? null : vidrio.motivo],
+      ['marca', vidrio === null ? null : vidrio.marca],
+    ];
+
+    for (const [rotulo, valor] of campos) {
+      const dt = document.createElement('dt');
+      dt.textContent = rotulo;
+      const dd = document.createElement('dd');
+      dd.textContent = texto(valor);
+      datos.append(dt, dd);
+    }
+
+    this.caja.replaceChildren(titulo, datos);
+
+    // El error, la frase entera del motor y sin recortar. Solo si lo hay: un vidrio
+    // que fue bien no ensena una linea roja vacia.
+    if (vidrio !== null && typeof vidrio.error === 'string' && vidrio.error.length > 0) {
+      const yerro = document.createElement('p');
+      yerro.className = 'yerro';
+      yerro.textContent = vidrio.error;
+      this.caja.append(yerro);
+    }
+
+    // Y el handoff, lo ultimo. Mientras se lee no se escribe nada: poner "sin
+    // handoff" para quitarlo medio segundo despues es peor que un hueco.
+    if (this.handoff !== undefined) {
+      const traspaso = document.createElement('p');
+      traspaso.className = this.handoff === null ? 'handoff sin' : 'handoff';
+      traspaso.textContent = this.handoff === null ? SIN_HANDOFF : this.handoff;
+      this.caja.append(traspaso);
+    }
+  }
+
+  /// Un vidrio no tiene PTY: no hay filas ni columnas que mandarle a nadie.
+  reajustar() {}
+
+  enfocar() {
+    this.caja.focus({ preventScroll: true });
+  }
+
+  cerrar() {
+    this.cerrado = true;
+  }
+}
+
+/// Un valor del vidrio, listo para pintar. Un dato ausente es un guion y no un
+/// hueco: un hueco no se distingue de un fallo de pintado.
+function texto(valor) {
+  if (Array.isArray(valor)) return valor.length === 0 ? SIN_CIFRA : valor.join(', ');
+  if (valor === null || valor === undefined || valor === '') return SIN_CIFRA;
+  return String(valor);
+}
+
 /// Una rejilla por proyecto: quien hay, quien manda, como se colocan. No sabe que
 /// hay dentro de un panel.
 ///
@@ -270,9 +539,16 @@ const rejillas = {
   zona: document.getElementById('zona'),
   /// ruta del proyecto -> { ruta, elemento, orden: [ids], celdas: Map, enfocado }
   porProyecto: new Map(),
-  /// id -> Panel, de todos los proyectos a la vez.
+  /// id -> Panel, de todos los proyectos a la vez. ES LA GUIA DE REPARTO DE LOS DOS
+  /// ESCUCHADORES DE PANEL, asi que aqui NO entran las celdas de vidrio: un evento
+  /// de PTY no tiene a quien ir en una celda que no tiene PTY. De paso, `vivos`
+  /// sigue contando solo paneles sin tener que preguntar de que tipo es cada pieza.
   paneles: new Map(),
-  /// id -> ruta de su proyecto, para saber a que rejilla pertenece un panel.
+  /// clave -> Panel o Detalle. Es lo que la rejilla usa para colocar, reajustar,
+  /// enfocar y cerrar: A ESTE NIVEL NO HAY DOS TIPOS DE CELDA, hay piezas con los
+  /// mismos cuatro metodos. Una regla, no dos.
+  piezas: new Map(),
+  /// clave -> ruta de su proyecto, para saber a que rejilla pertenece una pieza.
   dueno: new Map(),
   /// La ruta de la rejilla que se ve, o `null` si no se ve ninguna.
   visible: null,
@@ -315,9 +591,9 @@ const rejillas = {
     // El reajuste al mostrar se hace a mano y sobre TODOS sus paneles, no solo
     // sobre el enfocado. Leer la caja despues de quitar la clase fuerza el calculo
     // de la disposicion, asi que aqui ya miden lo que van a medir.
-    for (const id of rejilla.orden) {
-      const panel = this.paneles.get(id);
-      if (panel) panel.reajustar();
+    for (const clave of rejilla.orden) {
+      const pieza = this.piezas.get(clave);
+      if (pieza) pieza.reajustar();
     }
     this.enfocar(rejilla.enfocado);
   },
@@ -355,6 +631,7 @@ const rejillas = {
     // Se registra antes de abrir el PTY: si se registrase despues, lo primero que
     // escribiera el shell llegaria sin nadie a quien repartirselo.
     this.paneles.set(id, panel);
+    this.piezas.set(id, panel);
     this.dueno.set(id, ruta);
     rejilla.celdas.set(id, celda);
     rejilla.orden.push(id);
@@ -371,6 +648,50 @@ const rejillas = {
     pintarActividad();
   },
 
+  /// La celda de detalle de un vidrio, abierta al pulsar su fila en la barra. Va por
+  /// el mismo camino que un panel: misma rejilla, mismo tope, mismo foco, mismo
+  /// Ctrl+Shift+W para cerrarla.
+  ///
+  /// La clave lleva el proyecto dentro porque `piezas` y `dueno` son de toda la
+  /// aplicacion, no de una rejilla, y dos proyectos pueden tener una tarea con el
+  /// mismo id. Y empieza por una palabra, asi que nunca puede chocar con el id de un
+  /// panel, que es un numero que solo sube.
+  abrirDetalle(ruta, id) {
+    const clave = `detalle:${ruta}:${id}`;
+
+    // Pulsar dos veces el mismo vidrio no abre una segunda celda: se le da el foco a
+    // la que hay. Va antes que el tope, porque con cuatro celdas abiertas una de
+    // ellas puede ser justo esta.
+    if (this.piezas.has(clave)) {
+      this.enfocar(clave);
+      return;
+    }
+
+    const rejilla = this.para(ruta);
+    // El tope cuenta celdas, y una celda de vidrio es una celda: con cuatro abiertas
+    // pulsar un quinto vidrio no hace nada, como Ctrl+Shift+N. Y sin aviso, por lo
+    // mismo: el unico sitio donde escribirlo seria dentro de una celda.
+    if (rejilla.orden.length >= TOPE) return;
+
+    const celda = document.createElement('div');
+    celda.className = 'celda';
+    celda.addEventListener('mousedown', () => this.enfocar(clave), true);
+    rejilla.elemento.appendChild(celda);
+
+    const detalle = new Detalle(clave, ruta, id, celda);
+    this.piezas.set(clave, detalle);
+    this.dueno.set(clave, ruta);
+    rejilla.celdas.set(clave, celda);
+    rejilla.orden.push(clave);
+
+    this.forma(rejilla);
+    this.enfocar(clave);
+    // Se pinta con lo que haya ahora mismo. Un vidrio en `esperando` abre su celda
+    // igual, con lo poco que hay, y no es un error.
+    detalle.pintar(vidrioDe(ruta, id));
+    pintarVacio();
+  },
+
   cerrar(id) {
     const rejilla = this.porProyecto.get(this.dueno.get(id));
     if (!rejilla) return;
@@ -378,9 +699,10 @@ const rejillas = {
     const indice = rejilla.orden.indexOf(id);
     if (indice === -1) return;
 
-    this.paneles.get(id).cerrar();
+    this.piezas.get(id).cerrar();
     rejilla.celdas.get(id).remove();
     this.paneles.delete(id);
+    this.piezas.delete(id);
     this.dueno.delete(id);
     rejilla.celdas.delete(id);
     rejilla.orden.splice(indice, 1);
@@ -422,8 +744,8 @@ const rejillas = {
     for (const [otro, celda] of rejilla.celdas) {
       celda.classList.toggle('enfocada', otro === id);
     }
-    const panel = this.paneles.get(id);
-    if (panel) panel.enfocar();
+    const pieza = this.piezas.get(id);
+    if (pieza) pieza.enfocar();
   },
 
   /// Cuantos paneles VIVOS tiene un proyecto, INCLUIDOS LOS OCULTOS: es el numero
@@ -452,7 +774,7 @@ const rejillas = {
   forma(rejilla) {
     for (let n = 0; n <= TOPE; n += 1) rejilla.elemento.classList.remove(`paneles-${n}`);
     rejilla.elemento.classList.add(`paneles-${rejilla.orden.length}`);
-    for (const id of rejilla.orden) this.paneles.get(id).reajustar();
+    for (const clave of rejilla.orden) this.piezas.get(clave).reajustar();
   },
 };
 
@@ -464,30 +786,274 @@ const error = document.getElementById('error');
 const vacio = document.getElementById('vacio');
 const vacioTexto = document.getElementById('vacio-texto');
 const vacioBoton = document.getElementById('vacio-boton');
+const botonLanzar = document.getElementById('lanzar');
 const pieCpu = document.getElementById('pie-cpu');
 const pieRam = document.getElementById('pie-ram');
 
 /// El hueco del indicador y el contador de cada fila, por ruta. Se guardan al pintar
 /// la lista para poder ponerlos al dia SIN VOLVER A CONSTRUIR LA FILA: `pintarLista`
 /// rehace la lista entera, y hacer eso una vez por segundo reiniciaria la animacion
-/// del indicador en cada latido. Los cuatro cuadrados no llegarian a dar la vuelta
+/// del indicador en cada aviso. Los cuatro cuadrados no llegarian a dar la vuelta
 /// nunca: se quedarian parpadeando en el primero.
 const filas = new Map();
 
-/// Los ids que estan ejecutando algo, tal como llegaron en el ultimo latido de
+/// Los ids que estan ejecutando algo, tal como llegaron en el ultimo aviso de
 /// `paneles:ocupados`.
 ///
 /// AQUI NO SE CALCULA NADA. Las dos mitades de la senal -tener un proceso hijo y
 /// haber escrito en el ultimo segundo- las resuelve Rust, que es quien sabe cuando
 /// llego el ultimo byte y quien puede sacar el snapshot de procesos. Lo unico que se
 /// hace por este lado es SUSTITUIR la lista de antes por la que llega, que viene
-/// COMPLETA en cada latido: sin contabilidad propia de altas y bajas no hay
+/// COMPLETA en cada aviso: sin contabilidad propia de altas y bajas no hay
 /// transicion que se pueda perder ni estado que se desincronice.
 ///
 /// Y si el evento deja de llegar, los indicadores se quedan como estan. No hay
 /// tiempo de caducidad inventado por este lado: el contrato no lo da, y apagarlos
 /// solos convertiria una parada del emisor en un proyecto que parece parado.
 let ocupados = new Set();
+
+/// Las rutas que tienen una corrida en vuelo, tal como llegaron en el ultimo aviso.
+///
+/// AQUI TAMPOCO SE CALCULA NADA, y por la misma razon: es una lista COMPLETA en cada
+/// aviso, se sustituye entera, y sin contabilidad propia no hay transicion que se
+/// pueda perder. Una corrida en vuelo enciende EL INDICADOR QUE YA EXISTE, el mismo
+/// que encienden los paneles ocupados: una sola senal de "aqui se esta ejecutando
+/// algo", que es exactamente el nombre que el contrato eligio a proposito. Las dos
+/// senales las resuelve Rust; esto solo las junta.
+let corriendo = new Set();
+
+/// ruta -> la corrida entera, tal como la entrego `corrida.js`. No hay ningun
+/// "proyecto de la corrida" global: una corrida se direcciona por su proyecto, como
+/// un panel por su `id`, que es la misma leccion que ya dieron el `id` y el `cwd`.
+const corridas = new Map();
+
+/// ruta -> { caja, filas: Map<id, fila> } con las filas de vidrio de ese proyecto.
+///
+/// LA CAJA ES UN NODO PERSISTENTE, y no es un detalle: `pintarLista` rehace la lista
+/// entera cada vez que cambia el estado, y si las filas se reconstruyeran ahi la
+/// entrada de 220ms se volveria a reproducir en cada repintado y el fundido de una
+/// marca se perderia por el camino. Aqui la caja se guarda, se cuelga debajo de la
+/// fila del proyecto activo, y al cambiar de proyecto simplemente deja de colgarse:
+/// sus filas siguen enteras para cuando se vuelva.
+const vidrios = new Map();
+
+/// El vidrio con ese id dentro de la corrida de ese proyecto, o `null`. Es lo que
+/// usa una celda de detalle recien abierta para pintarse con lo que ya se sabe.
+function vidrioDe(ruta, id) {
+  const corrida = corridas.get(ruta);
+  if (!corrida || !Array.isArray(corrida.vidrios)) return null;
+  return corrida.vidrios.find((vidrio) => vidrio.id === id) ?? null;
+}
+
+/// Una corrida esta en vuelo mientras no haya llegado a un final. No se puede
+/// intervenir: ni abortar, ni pausar, ni reanudar. El motor no ofrece nada de eso
+/// hoy y aqui no se inventa; lo unico que cambia es que el boton de lanzar se apaga.
+function enVuelo(corrida) {
+  return corrida !== null && (corrida.estado === 'lanzando' || corrida.estado === 'corriendo');
+}
+
+/// Si el proximo lanzamiento es la corrida de verdad o el ensayo.
+///
+/// EL ENSAYO VA SIEMPRE PRIMERO: no gasta un centimo y es donde saltan los
+/// guardarrailes. Cuando un `--seco` termina bien, y solo entonces, el boton pasa a
+/// ofrecer la corrida real. NO SE LANZA LA REAL SOLA: la persona ve el resultado del
+/// ensayo y decide, que es justo lo que este par de estados hace posible.
+function seraReal(corrida) {
+  return corrida !== null && corrida.seco === true && corrida.estado === 'terminada';
+}
+
+/// Los datos de una fila de vidrio: el tiempo y el coste, que son las dos cifras que
+/// caben en una fila de 28px de una barra de 260. Un vidrio que aun no ha arrancado
+/// no trae ninguna de las dos y su fila se queda con la marca y el id, que es lo
+/// honrado: no hay barra de progreso, ni porcentaje, ni tiempo estimado, porque el
+/// motor no sabe cuanto va a tardar una tarea y un porcentaje inventado es peor que
+/// ningun porcentaje.
+function datosDe(vidrio) {
+  const trozos = [];
+  if (Number.isFinite(vidrio.ms)) trozos.push(tiempo(vidrio.ms));
+  if (Number.isFinite(vidrio.costo)) trozos.push(coste(vidrio.costo));
+  return trozos.join(' · ');
+}
+
+/// Una fila de vidrio, recien construida y todavia fuera: entra cuando alguien le
+/// ponga la clase `dentro`.
+function construirVidrio(ruta, vidrio) {
+  const fila = document.createElement('div');
+  fila.className = 'v';
+
+  // Un `button` para que llegue por el tabulador y por Enter sin inventar nada. Sin
+  // fondo propio y sin hover: no es un control de navegacion como la fila de un
+  // proyecto, se pulsa para abrir su detalle y nada mas.
+  const boton = document.createElement('button');
+  boton.type = 'button';
+  boton.className = 'v-fila';
+
+  const caja = document.createElement('span');
+  caja.className = 'caja';
+
+  const rotulo = document.createElement('span');
+  rotulo.className = 'v-id';
+  rotulo.textContent = vidrio.id;
+
+  const datos = document.createElement('span');
+  datos.className = 'v-datos';
+
+  boton.append(caja, rotulo, datos);
+  boton.addEventListener('click', () => rejillas.abrirDetalle(ruta, vidrio.id));
+  fila.append(boton);
+
+  return { fila, boton, caja, datos, estado: null };
+}
+
+/// Pone al dia una fila con el vidrio que llega. EL DOM SOLO SE TOCA CUANDO ALGO
+/// CAMBIA DE VERDAD, que aqui importa mas que en ningun otro sitio: reescribir la
+/// marca en cada cambio reiniciaria el giro de los cuatro cuadros de `en curso`
+/// varias veces por segundo.
+function refrescarVidrio(pieza, vidrio) {
+  const datos = datosDe(vidrio);
+  if (pieza.datos.textContent !== datos) pieza.datos.textContent = datos;
+
+  // La marca es la unica que lleva el estado y no tiene texto, asi que el estado
+  // viaja tambien por aqui para quien no ve la pantalla.
+  const rotulo = `${vidrio.id} · ${vidrio.estado}`;
+  if (pieza.boton.getAttribute('aria-label') !== rotulo) {
+    pieza.boton.setAttribute('aria-label', rotulo);
+    pieza.boton.title = rotulo;
+  }
+
+  if (pieza.estado === vidrio.estado) return;
+  const primera = pieza.estado === null;
+  pieza.estado = vidrio.estado;
+
+  const nueva = marca(vidrio.estado);
+  // La primera marca entra con la fila, dentro de su misma entrada: fundirla ademas
+  // seria animar dos veces lo mismo.
+  if (primera) {
+    pieza.caja.append(nueva);
+    return;
+  }
+
+  // FUNDIDO CRUZADO DE 220ms, Y SOLO LA MARCA: la fila no se mueve. Las dos marcas
+  // ocupan el mismo sitio a la vez porque el CSS las apila, asi que nada de lo que
+  // hay debajo salta. El cambio ya trae ademas una senal fuerte gratis: `en curso`
+  // es lo unico que se mueve continuamente, asi que pasar a `ok` es pasar de moverse
+  // a estarse quieto.
+  nueva.classList.add('entra');
+  pieza.caja.append(nueva);
+  requestAnimationFrame(() => {
+    nueva.classList.remove('entra');
+    nueva.classList.add('entra2');
+  });
+
+  for (const vieja of [...pieza.caja.children]) {
+    if (vieja === nueva) continue;
+    vieja.classList.remove('entra', 'entra2');
+    vieja.classList.add('sale');
+    setTimeout(() => vieja.remove(), RETIRADA_MS);
+  }
+}
+
+/// Las filas de vidrio de un proyecto, puestas al dia con la corrida que llega.
+///
+/// `corrida.vidrios` VA EN ORDEN DE OLA y ese orden no cambia nunca: no es orden de
+/// llegada, porque el motor dice los ids de todas las tareas de todas las olas antes
+/// de que empiece ninguna. Lo unico que puede pasar es que aparezca uno al final
+/// -un id que no estaba, que se anade porque perder un final es peor que ensenar uno
+/// de mas-, asi que recorrer la lista y anadir lo que falte conserva el orden solo.
+function pintarVidrios(corrida) {
+  const ruta = corrida.proyecto;
+  const lote = Array.isArray(corrida.vidrios) ? corrida.vidrios : [];
+
+  let grupo = vidrios.get(ruta);
+  if (grupo === undefined) {
+    const caja = document.createElement('li');
+    caja.className = 'vidrios';
+    grupo = { caja, filas: new Map() };
+    vidrios.set(ruta, grupo);
+  }
+
+  const nuevas = [];
+  for (const vidrio of lote) {
+    let pieza = grupo.filas.get(vidrio.id);
+    if (pieza === undefined) {
+      pieza = construirVidrio(ruta, vidrio);
+      grupo.filas.set(vidrio.id, pieza);
+      grupo.caja.append(pieza.fila);
+      nuevas.push(pieza);
+    }
+    refrescarVidrio(pieza, vidrio);
+  }
+
+  colgarVidrios(ruta);
+
+  // LAS FILAS ENTRAN COMO UN BLOQUE, con escalonado CERO. No es pereza: escalonar
+  // mentiria. Las filas no aparecen cuando arrancan los vidrios, aparecen todas a la
+  // vez porque el motor dice de golpe los ids de todas las olas, y un escalonado
+  // insinuaria un orden de llegada que no existe. El `requestAnimationFrame` es solo
+  // para que el navegador vea el estado de partida antes que el de llegada; si se
+  // pusiera la clase en el mismo fotograma no habria transicion, habria un salto.
+  if (nuevas.length > 0) {
+    requestAnimationFrame(() => {
+      for (const pieza of nuevas) pieza.fila.classList.add('dentro');
+    });
+  }
+}
+
+/// Cuelga las filas de vidrio de un proyecto debajo de su fila en la lista, y solo
+/// si es el activo: un proyecto que no esta activo no ensena sus vidrios, igual que
+/// no ensena sus paneles.
+function colgarVidrios(ruta) {
+  const grupo = vidrios.get(ruta);
+  if (grupo === undefined) return;
+  if (ruta !== app.estado.activo) {
+    grupo.caja.remove();
+    return;
+  }
+  const fila = filas.get(ruta);
+  if (fila === undefined) return;
+  if (grupo.caja.previousElementSibling !== fila.li) fila.li.after(grupo.caja);
+}
+
+/// Borra las filas de un proyecto. Los vidrios terminados NO SE BORRAN SOLOS -se
+/// quedan hasta que la persona los quite de en medio, por la misma razon por la que
+/// un panel muerto conserva su scrollback-, asi que esto solo lo llama lanzar otra
+/// corrida, que es una accion de la persona.
+function soltarVidrios(ruta) {
+  const grupo = vidrios.get(ruta);
+  if (grupo === undefined) return;
+  grupo.caja.remove();
+  vidrios.delete(ruta);
+}
+
+/// Lo que llega por `alCambiar`: la corrida entera ya recalculada. Se guarda tal
+/// cual y se repinta con ella; no se mantiene una copia propia que luego diverja.
+function pintarCorrida(corrida) {
+  if (!corrida || typeof corrida.proyecto !== 'string') return;
+  corridas.set(corrida.proyecto, corrida);
+
+  pintarVidrios(corrida);
+  pintarLanzar();
+
+  // Una corrida `rechazada` no tiene ni un vidrio -un guardarrail que aborta, o un
+  // proyecto sin boceto, donde el motor devuelve su propio error-, asi que sin esto
+  // no se veria absolutamente nada y la ventana se quedaria en blanco sin decir por
+  // que. Va al mismo sitio que los demas errores de la barra: debajo de la lista, en
+  // `error-barra`, y nunca dentro de una fila.
+  //
+  // Solo se escribe, no se borra: el mensaje que hubiera es de otra accion de la
+  // persona, y quitarselo desde aqui seria taparle un fallo suyo. Lo limpia la
+  // proxima accion, como ya hacian las demas.
+  if (corrida.proyecto === app.estado.activo && corrida.estado === 'rechazada' && corrida.error) {
+    mensaje(corrida.error.mensaje);
+  }
+
+  // Y las celdas de detalle que esten abiertas de este proyecto, que son las que
+  // ensenan lo que la fila no tiene sitio para decir.
+  for (const pieza of rejillas.piezas.values()) {
+    if (!(pieza instanceof Detalle) || pieza.ruta !== corrida.proyecto) continue;
+    pieza.pintar(vidrioDe(corrida.proyecto, pieza.id));
+  }
+}
 
 /// El ultimo `Estado` que devolvio Rust, tal cual llego. Los tres comandos que lo
 /// devuelven mandan el estado ENTERO recalculado, asi que aqui no se mantiene una
@@ -532,6 +1098,81 @@ function pintar() {
   rejillas.mostrar(activo !== null && activo.disponible ? activo.ruta : null);
 
   pintarVacio();
+  pintarLanzar();
+}
+
+/// El boton de lanzar una tanda, que actua sobre el proyecto activo. Solo existe si
+/// hay uno disponible: sin proyecto no hay raiz, y la raiz sale del `cwd`, que es la
+/// primitiva del motor.
+function pintarLanzar() {
+  const activo = proyectoActivo();
+  const hay = activo !== null && activo.disponible;
+  botonLanzar.hidden = !hay;
+  if (!hay) return;
+
+  const corrida = corridas.get(activo.ruta) ?? null;
+  const enMarcha = enVuelo(corrida);
+  const real = seraReal(corrida);
+
+  botonLanzar.disabled = enMarcha;
+  botonLanzar.textContent = real ? LANZAR_REAL : LANZAR_SECO;
+  botonLanzar.title = rotuloLanzar(activo.nombre, corrida, enMarcha, real);
+}
+
+/// Lo que dice el boton al detenerse el raton encima. Es tambien el unico sitio
+/// donde se ve en que va la corrida cuando todavia no hay ni un vidrio -mientras
+/// lanza, o cuando un guardarrail la rechazo antes de empezar-, y por eso nombra su
+/// estado en vez de limitarse a decir que hace al pulsarlo.
+function rotuloLanzar(nombre, corrida, enMarcha, real) {
+  if (enMarcha) {
+    return corrida.estado === 'lanzando'
+      ? `lanzando la tanda de "${nombre}"…`
+      : `hay una tanda corriendo en "${nombre}"`;
+  }
+  if (real) return `Lanzar la tanda de verdad en "${nombre}"`;
+  // El ensayo va siempre primero, y se dice: el boton no puede parecer que gasta
+  // dinero la primera vez que se pulsa.
+  //
+  // Una linea del flujo que no se pudo leer se ignora y SE CUENTA, y si al final
+  // hubo alguna la corrida tiene que decirlo. Se dice aqui porque este rotulo es lo
+  // unico de esta interfaz que habla de la corrida entera: la celda de detalle es de
+  // un vidrio, y una corrida sin vidrios no tiene ninguna.
+  const rotas = corrida !== null && corrida.lineasIlegibles > 0 ? `${corrida.lineasIlegibles} lineas ilegibles · ` : '';
+  const antes = corrida === null ? '' : `la anterior quedo ${corrida.estado} · `;
+  return `${antes}${rotas}Lanzar el ensayo (--seco) en "${nombre}"`;
+}
+
+/// Lanzar. El ensayo primero y la corrida real despues, y nunca las dos seguidas
+/// sin que la persona lo pida otra vez.
+async function lanzarTanda() {
+  const activo = proyectoActivo();
+  if (activo === null || !activo.disponible) return;
+
+  const anterior = corridas.get(activo.ruta) ?? null;
+  // Sobre un proyecto que ya tiene una corrida en marcha, Rust devolveria `Err` y no
+  // lanzaria un segundo proceso. Aqui ni se le pregunta: el boton ya esta apagado.
+  if (enVuelo(anterior)) return;
+
+  const seco = !seraReal(anterior);
+  mensaje('');
+
+  // La corrida anterior se olvida antes de empezar otra, y sus filas con ella. Esto
+  // no contradice que los vidrios terminados no se borren solos: quien lo pide es la
+  // persona, pulsando el boton.
+  if (anterior !== null) {
+    olvidarCorrida(activo.ruta);
+    corridas.delete(activo.ruta);
+    soltarVidrios(activo.ruta);
+  }
+
+  try {
+    await arrancar(activo.ruta, { seco });
+  } catch (fallo) {
+    // Un `node` que no esta en el PATH, o un segundo lanzamiento que se colo: se
+    // pinta como cualquier otro error de la barra y no deja la ventana en blanco.
+    mensaje(String(fallo));
+  }
+  pintarLanzar();
 }
 
 /// Los cuatro cuadraditos. El ORDEN DEL ANILLO -y con el el reparto de los cuatro
@@ -616,7 +1257,13 @@ function pintarLista() {
 
     fila.append(inicial, nombre, actividad, cuenta, quitarlo);
     lista.append(fila);
-    filas.set(proyecto.ruta, { actividad, cuenta, ocupado: false });
+    filas.set(proyecto.ruta, { li: fila, actividad, cuenta, ocupado: false });
+
+    // Y sus vidrios justo debajo, si es el activo y tiene una corrida. La caja es un
+    // nodo que ya existia con sus filas dentro: aqui se vuelve a colgar, no se
+    // rehace, que es lo que evita que la entrada de 220ms se repita en cada
+    // repintado de la lista.
+    colgarVidrios(proyecto.ruta);
   }
 
   // La lista se acaba de rehacer, asi que los contadores estan vacios y no hay
@@ -625,12 +1272,12 @@ function pintarLista() {
 }
 
 /// El contador y el indicador de cada fila, puestos al dia. Se llama una vez por
-/// segundo -en cada latido de `paneles:ocupados`- y tambien cada vez que un panel
+/// segundo -en cada aviso de `paneles:ocupados`- y tambien cada vez que un panel
 /// nace, muere o se cierra, que es cuando cambia el contador sin que cambie nada de
 /// lo que manda Rust.
 ///
 /// EL DOM SOLO SE TOCA CUANDO ALGO CAMBIA DE VERDAD. Quitar y volver a poner el
-/// indicador en cada latido reiniciaria su animacion cada segundo y los cuatro
+/// indicador en cada aviso reiniciaria su animacion cada segundo y los cuatro
 /// cuadrados nunca completarian la vuelta de 1.6s.
 function pintarActividad() {
   // La senal llega por panel; la fila es por proyecto. Un proyecto esta ejecutando
@@ -647,8 +1294,13 @@ function pintarActividad() {
     if (fila.cuenta.textContent !== texto) fila.cuenta.textContent = texto;
 
     // Sin ningun panel vivo no hay nada que pueda estar ejecutandose, por muy tarde
-    // que llegue un latido con un id suyo dentro.
-    const ocupado = cuantos > 0 && rutasOcupadas.has(ruta);
+    // que llegue un aviso con un id suyo dentro.
+    //
+    // LAS DOS SENALES SE JUNTAN AQUI Y NADA MAS: paneles ocupados O corrida en
+    // vuelo. Las dos las resuelve Rust. Y la de la corrida no pide paneles vivos,
+    // porque una corrida no es un panel: el proceso del motor es suyo, sobrevive a
+    // que se quite el proyecto y no muere al cerrar la ventana.
+    const ocupado = (cuantos > 0 && rutasOcupadas.has(ruta)) || corriendo.has(ruta);
     if (ocupado === fila.ocupado) continue;
 
     fila.ocupado = ocupado;
@@ -853,7 +1505,11 @@ function atajo(letra) {
 // ningun terminal enfocado. Lo que sale de una celda ya lo atendio el terminal.
 window.addEventListener('keydown', (evento) => {
   if (!evento.ctrlKey || !evento.shiftKey) return;
-  if (evento.target instanceof Element && evento.target.closest('.celda')) return;
+  // Lo que sale de un TERMINAL ya lo atendio `attachCustomKeyEventHandler`. Se mira
+  // el terminal y no la celda entera desde que hay celdas que no son terminales: con
+  // una celda de vidrio enfocada, mirar `.celda` dejaria los tres atajos sin nadie
+  // que los oyera, que es justo el agujero que este escuchador vino a tapar.
+  if (evento.target instanceof Element && evento.target.closest('.xterm')) return;
 
   const letra = evento.key.toLowerCase();
   if (letra !== 'n' && letra !== 'w' && letra !== 'b') return;
@@ -863,6 +1519,7 @@ window.addEventListener('keydown', (evento) => {
 });
 
 document.getElementById('anadir').addEventListener('click', () => anadir());
+botonLanzar.addEventListener('click', () => lanzarTanda());
 
 // El boton grande del estado vacio. Un solo escuchador para las tres pantallas que
 // lo llevan: lo que hace lo dice `data-accion`, que pone `pintarVacio` al repintar.
@@ -875,7 +1532,7 @@ vacioBoton.addEventListener('click', () => {
   else if (accion === 'panel') rejillas.abrir();
 });
 
-// ------------------------------------------------------------------- arranque
+// ------------------------------------------------------------ puesta en marcha
 
 // Un `listen('panel:salida')` y un `listen('panel:fin')`, montados al arrancar y
 // nunca desmontados: por eso no se guarda lo que devuelve `listen`. Uno por panel
@@ -901,9 +1558,9 @@ Promise.all([
     // quien lo cuenta es esto, desde fuera.
     pintarActividad();
   }),
-  // La senal llega YA RESUELTA y con la lista COMPLETA en cada latido: se sustituye
+  // La senal llega YA RESUELTA y con la lista COMPLETA en cada aviso: se sustituye
   // la de antes por la que llega, sin llevar altas y bajas por este lado. Un panel
-  // que muere mientras ejecutaba algo simplemente no viene en el latido siguiente,
+  // que muere mientras ejecutaba algo simplemente no viene en el aviso siguiente,
   // y su indicador desaparece sin que haga falta ningun aviso aparte.
   listen('paneles:ocupados', ({ payload }) => {
     ocupados = new Set(payload.ids);
@@ -913,7 +1570,20 @@ Promise.all([
   // vas a estar en otra ventana- y con la ventana minimizada Rust deja de emitir, asi
   // que la franja se queda con la ultima cifra hasta que vuelva a llegar una.
   listen('maquina:uso', ({ payload }) => pintarUso(payload)),
+  // La otra mitad del indicador. Tambien llega ya resuelta y con la lista COMPLETA,
+  // asi que se sustituye entera igual que la de los paneles.
+  listen('corridas:activas', ({ payload }) => {
+    corriendo = new Set(payload.proyectos);
+    pintarActividad();
+  }),
 ]).then(leer_estado);
+
+// Un solo escuchador de la forma interna, montado aqui y nunca desmontado, como los
+// de panel. Lo que llega es LA CORRIDA ENTERA YA RECALCULADA: esto repinta con lo
+// que recibe y no mantiene su propia copia. Quien conoce el catalogo de eventos del
+// motor -y quien ignora sin ruido una linea de un proyecto que no esta en su
+// registro- es `corrida.js`, no esto.
+alCambiar(pintarCorrida);
 
 /// Al cargar no se abre ningun panel: se lee el estado, se pinta la lista y, si hay
 /// un proyecto activo disponible, se muestra su rejilla vacia. El primero lo abre
