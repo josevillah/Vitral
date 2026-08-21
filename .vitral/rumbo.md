@@ -116,6 +116,41 @@ contrato.
 que decidirlo cuando se planifique la primera tanda de interfaz que consuma el flujo,
 con el caso delante.
 
+### El contrato de la interfaz pide partirse, y esto es lo que cuesta hoy
+
+**Decision de contenido, no de aseo, y merece su propia sesion.** Se deja apuntada con
+las cifras del 21-08-2026 para que se decida con datos y no con la sensacion de que el
+archivo es largo.
+
+`.vitral/ui/plomo/panel-pty.md` describe ya **seis superficies distintas** —el panel
+PTY, la cuadricula, los proyectos, la paleta, la densidad y el modo corrida— y **cada
+tarea lo recibe entero aunque toque una esquina**. Tras cerrar la tanda del modo
+corrida y subirle lo que sobreviva, llega a unos **91 KB**, y el prompt de cada vidrio
+a unos **100 KB**.
+
+Lo que eso cuesta, en dos cifras que **no son la misma** y conviene no mezclar:
+
+| Que | Cuanto |
+|---|---|
+| Cachear el prompt **una vez**, por vidrio | ~$0.39 · en una tanda de cuatro, **~$1.55 de suelo** |
+| Escritura de cache **de toda la tanda**, porque el prompt se recachea segun crece la conversacion | **~$5.47** en una tanda de cuatro |
+
+La segunda sale de medir, no de estimar: sumando `cacheCreationInputTokens` de las
+cinco tareas de la tanda de los eventos —plomo de 53.5 KB, prompt de 58 KB— dan
+**396.824 tokens**, o sea **$3.97**, que son **$0.0137 por KB de prompt y por tarea**.
+Proyectado a 100 KB y cuatro vidrios: $5.47.
+
+**Y no se arregla retirando nada, porque no queda nada que retirar.** En
+`.vitral/ui/plomo/` el unico permanente es `panel-pty.md`; el plomo de cada tanda ya se
+retira al cerrar. El coste no viene de acumular basura: viene de que **un contrato
+permanente crecio hasta cubrir seis superficies** y el motor no sabe dar media.
+
+Las salidas posibles, sin elegir ninguna aqui: partirlo en varios archivos del mismo
+directorio no sirve —`leerPlomo` los concatena todos igual—; hara falta o subsistemas
+con boceto propio por superficie, o mover a `procedencia.md` lo que es historia y no
+contrato, o aceptar el coste a cambio de que ningun agente pueda alegar que no lo sabia.
+Es exactamente la clase de decision que no se toma de rebote a mitad de otra tanda.
+
 ### Un borde que hoy es un fallo latente
 
 `--boceto` puede apuntar a un boceto de **otro** proyecto, y el motor lo ejecuta contra

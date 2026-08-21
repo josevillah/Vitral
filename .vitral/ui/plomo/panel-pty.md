@@ -394,8 +394,10 @@ Con los simbolos exactos de `portable-pty` 0.9.0:
   `PtyPair` con `.master` y `.slave`. Los campos se llaman `rows` y `cols` en ingles
   porque son de la biblioteca; los argumentos del comando se llaman `filas` y
   `columnas` porque son nuestros. No se mezclan.
-- `CommandBuilder::new(SHELL)` arma el proceso. **No se le fija `cwd`**: hereda el del
-  proceso de la aplicacion.
+- `CommandBuilder::new(SHELL)` arma el proceso, y **se le fija el `cwd`** con
+  `orden.cwd(&destino)`, ya validado y absoluto. Lo detalla "El `cwd` de un panel es del
+  panel", mas abajo: no hay ningun directorio actual global, y `portable-pty` descarta en
+  silencio un `cwd` que no existe, asi que se comprueba antes de `openpty`.
 - `pair.slave.spawn_command(cmd)` lo lanza y devuelve el `Child`.
 - `pair.master.take_writer()` da el escritor que se guarda.
 - `pair.master.try_clone_reader()` da el lector que se lleva el hilo lector.
