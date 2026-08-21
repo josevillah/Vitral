@@ -153,10 +153,16 @@ const EVENTOS = {
   // latido{id,ms} - cada 60 s. Solo actualiza el tiempo; el estado lo puso
   // `arranque`. Un latido de un id desconocido no inventa un vidrio: a
   // diferencia de un cierre, no trae ningun resultado que se pueda perder.
+  //
+  // Solo cuenta mientras el vidrio esta EN CURSO, que es lo que dice la tabla
+  // de los siete estados. Un latido que llegue detras del `cierre` -su tiempo
+  // lo cuenta un temporizador, y el cierre puede escribirse entremedias- le
+  // pisaria al vidrio el `ms` final con uno mas viejo, y ese es justo el numero
+  // que ensena la celda de detalle.
   latido(corrida, evt) {
     if (typeof evt.id !== 'string') return;
     const vidrio = buscarVidrio(corrida, evt.id, false);
-    if (vidrio) vidrio.ms = evt.ms ?? null;
+    if (vidrio && vidrio.estado === 'en curso') vidrio.ms = evt.ms ?? null;
   },
 
   // cierre{id,ok,ms,costo,turnos,denegaciones,handoff,motivo,error,marca}
@@ -249,7 +255,11 @@ function llegaLinea(proyecto, linea) {
     return ilegible(corrida);
   }
 
-  const aplicar = EVENTOS[evt.evt];
+  // `Object.hasOwn` y no `EVENTOS[evt.evt]` a secas: una linea con
+  // `"evt":"hasOwnProperty"` -o `constructor`, o `toString`- alcanzaria el
+  // prototipo de Object y llamaria a un metodo que no es nuestro. Con esto un
+  // `evt` que no este en el catalogo se ignora siempre por el mismo camino.
+  const aplicar = Object.hasOwn(EVENTOS, evt.evt) ? EVENTOS[evt.evt] : null;
   if (typeof aplicar !== 'function') return;
   aplicar(corrida, evt);
   avisar(corrida);

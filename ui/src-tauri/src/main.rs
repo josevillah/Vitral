@@ -945,6 +945,45 @@ fn lanzar_corrida(
     Ok(())
 }
 
+/// El handoff de una tarea, si lo dejo escrito.
+///
+/// LO UNICO QUE ESTA INTERFAZ LEE DE `.vitral/`, y por un milimetro:
+/// `.vitral/handoffs/<id>.md` del proyecto, solo lectura, y solo cuando el frontend
+/// abre la celda de un vidrio. Ni logs, ni boceto, ni historial, ni marcas de
+/// incompleto, y no se enumera nada: se compone una ruta y se lee ese archivo.
+///
+/// **Este comando no esta en la tabla del catalogo IPC del plomo de la tanda, y se
+/// anade aqui a proposito.** El plomo manda leer ese archivo al pulsar un vidrio -y
+/// su comprobacion manual numero 11 lo da por hecho-, pero su tabla de comandos solo
+/// trae `lanzar_corrida`, asi que la capacidad estaba contratada y sin ningun canal
+/// por donde pasar. `tauri-plugin-fs` no se usa y no se le da ningun permiso, asi
+/// que desde el frontend no hay otra via. No anade dependencia ni permiso: un
+/// comando propio no lleva entrada en `capabilities/default.json`.
+///
+/// Que el archivo no exista es EL CASO NORMAL -una tarea que no dejo handoff-, asi
+/// que eso no es `Err`: devuelve la cadena vacia y la celda dice "sin handoff".
+#[tauri::command(async)]
+fn leer_handoff(proyecto: String, id: String) -> Result<String, String> {
+    // El id viene del flujo del motor, no de la persona, pero compone una ruta: un
+    // separador o un `:` dentro lo sacarian del directorio de handoffs, y de ahi a
+    // leer cualquier archivo del disco hay un paso. Sin separadores, `<id>.md` es
+    // siempre un nombre de archivo dentro de esa carpeta.
+    if id.is_empty() || id.contains(std::path::is_separator) || id.contains(':') {
+        return Err(format!("id de tarea invalido: \"{id}\""));
+    }
+
+    let ruta = Path::new(&normalizar(&proyecto))
+        .join(".vitral")
+        .join("handoffs")
+        .join(format!("{id}.md"));
+
+    match std::fs::read_to_string(&ruta) {
+        Ok(texto) => Ok(texto),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("no se pudo leer el handoff de \"{id}\": {e}")),
+    }
+}
+
 /// Los proyectos con una corrida en marcha: la lista entera, para el latido.
 fn activas(app: &AppHandle) -> Vec<String> {
     let estado: State<'_, Corridas> = app.state();
@@ -1226,7 +1265,8 @@ fn main() {
             anadir_proyecto,
             quitar_proyecto,
             guardar_preferencias,
-            lanzar_corrida
+            lanzar_corrida,
+            leer_handoff
         ])
         .run(tauri::generate_context!())
         .expect("no se pudo arrancar la aplicacion de tauri");
