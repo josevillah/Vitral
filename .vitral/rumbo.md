@@ -145,11 +145,56 @@ Proyectado a 100 KB y cuatro vidrios: $5.47.
 retira al cerrar. El coste no viene de acumular basura: viene de que **un contrato
 permanente crecio hasta cubrir seis superficies** y el motor no sabe dar media.
 
-Las salidas posibles, sin elegir ninguna aqui: partirlo en varios archivos del mismo
-directorio no sirve —`leerPlomo` los concatena todos igual—; hara falta o subsistemas
-con boceto propio por superficie, o mover a `procedencia.md` lo que es historia y no
-contrato, o aceptar el coste a cambio de que ningun agente pueda alegar que no lo sabia.
-Es exactamente la clase de decision que no se toma de rebote a mitad de otra tanda.
+**El motor ya sabe dar media, desde la tanda de `plomos`.** Lo de arriba se escribio
+cuando partirlo en varios archivos del mismo directorio no servia, porque `leerPlomo`
+los concatenaba todos igual. Eso dejo de ser cierto: una tarea declara en el boceto
+que archivos lee, y omitir el campo sigue significando todos. Ya no hacen falta
+subsistemas con boceto propio por superficie. **Lo que queda es la decision de
+contenido: por donde se corta `panel-pty.md`.** Sigue sin tomarse de rebote a mitad de
+otra tanda.
+
+#### Cuanto ahorra la particion de verdad: 34%, no 60%
+
+Medido el 21-08-2026 sobre `.vitral/ui/boceto.json` tal como esta, troceando
+`panel-pty.md` por sus secciones reales y repartiendolas entre sus cuatro tareas segun
+lo que cada prompt dice ya que necesita:
+
+| Tarea | Recibe hoy | Recibiria | Ahorro |
+|---|---|---|---|
+| `rust-corrida` | 104.228 B | 56.540 B | 46% |
+| `flujo` | 104.228 B | 41.917 B | 60% |
+| `barra` | 104.228 B | 73.763 B | 29% |
+| `revision` | 104.228 B | 104.208 B | **0%** |
+| **La tanda entera** | **416.912 B** | **276.428 B** | **33,7%** |
+
+**Quien vaya a partirlo necesita saber esto antes de empezar**, porque la intuicion
+dice el doble y luego el resultado decepciona. El suelo tiene dos causas, y ninguna se
+arregla cortando mejor:
+
+- **`corrida.md` son 25.093 B que viajan igual a las cuatro tareas.** Es el contrato de
+  la tanda en curso: nadie puede no leerlo. El 24% del total es irreducible por
+  construccion.
+- **La tarea de revision paga el precio entero, y hace bien.** Revisar la tanda contra
+  el contrato es leer el contrato entero. Un cuarto de la tanda no ahorra nada.
+
+Lo separable de verdad son unos 33 KB de `panel-pty.md` en bloques que se mueven sin
+tocar contenido —proyectos, ConPTY y ciclo de vida, la senal de actividad, el uso de la
+maquina, la barra densa, la configuracion de Tauri, la disposicion de archivos—, mas la
+paleta Pergamino, que son 4.703 B **hoy enterrados dentro de `### Como se ve la barra
+lateral`** y que `corrida.md` ya cita desde fuera por nombre de archivo. Sacar la paleta
+a su propio archivo es la mejora mas limpia del lote y no depende de las demas.
+
+Lo que **no** se separa moviendo bloques: "Los bordes" (4.860 B) es una sola tabla de 38
+filas que mezcla PTY, proyectos, teclado y muestreo de CPU, y "Como se comprueba"
+(7.918 B) es una sola lista numerada que atraviesa todas las superficies. Se reparten
+fila a fila o no se reparten.
+
+Y un coste que no se ve hasta que se paga: `corrida.md` cita `panel-pty.md` **por nombre
+de archivo en cuatro sitios** —la paleta, la prohibicion de etiquetas, el proceso
+huerfano y la primacia— y dentro de `panel-pty.md` hay cinco referencias del tipo "mas
+arriba" y "la seccion de la senal dice por que" que dejan de significar nada en cuanto
+haya varios archivos. Ninguna revienta: solo apuntan a un sitio donde ya no esta lo
+citado.
 
 ### Un borde que hoy es un fallo latente
 
