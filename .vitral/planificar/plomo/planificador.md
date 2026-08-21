@@ -299,6 +299,46 @@ Dos frases que hay que decir siempre, aunque la persona ya las sepa:
 - **Corre `node vitral.mjs --seco` primero.** Imprime los prompts completos sin
   ejecutar nada y sin gastar un centimo, y ademas es donde saltan el ciclo de
   dependencias, el solapamiento de rutas y los avisos de presupuesto.
+- **Y lee la primera linea de esa cabecera: comprueba que el titulo es el de la
+  tanda que quieres lanzar.** Suena a perogrullada y es la unica defensa que hay.
+
+#### Por que el titulo de la cabecera es una comprobacion y no un adorno
+
+**El boceto vive en una ruta fija y se sobrescribe.** `.vitral/boceto.json` —o
+`.vitral/ui/boceto.json`— es siempre el mismo archivo, tanda tras tanda. Con lo cual:
+
+- **`git status` no lo distingue.** Un boceto viejo sin commitear y uno nuevo sin
+  commitear se ven exactamente igual: una linea de modificado. Y si el viejo **si**
+  esta commiteado, el arbol esta limpio y no hay ni esa linea.
+- **`node vitral.mjs` a secas lo ejecuta tal cual**, sin preguntar y sin decir de
+  cuando es.
+- **El nombre del archivo no dice nada.** Nunca lleva el nombre de la tanda.
+
+Lo unico que lo dice es el campo `nombre` del boceto, y sale pintado en la primera
+linea de `--seco`, antes que ninguna otra cosa:
+
+```
+vitral · El modo corrida: la ventana lanza una tanda
+boceto .vitral\ui\boceto.json · rama feat/handoffs · plomo 2 archivos (104.2 KB) · olas 3 -> 1
+```
+
+**Paso el 21-08-2026, y costo $10.79.** Se lanzo la tanda del modo corrida —ya
+entregada semanas antes— creyendo que se lanzaba la de los handoffs, porque el boceto
+viejo seguia en su sitio. Reejecuto cuatro vidrios sobre codigo que ya estaba bien.
+**El seco lo decia en su primera linea y nadie la leyo**, porque la costumbre es
+mirar las olas y los presupuestos, que estan mas abajo.
+
+Y tuvo suerte: los agentes encontraron dos fallos reales que la primera corrida no
+vio. Podia perfectamente haber sido al reves.
+
+De ahi salen dos cosas, y la segunda es del planificador:
+
+**La primera linea del seco se lee siempre, antes que las olas.** Es la unica que
+responde "¿que voy a lanzar?"; el resto responde "¿como va a correr?".
+
+**Y por eso el cierre de una tanda borra el boceto, y no es aseo.** Ya esta escrito
+arriba, en "Por que existe el cierre": un boceto que se queda se puede relanzar por
+accidente. Esto es ese parrafo, cobrado.
 
 Y un aviso mas, si la persona esta en `main` o `master`: la corrida real va a
 abortar. Es deliberado.

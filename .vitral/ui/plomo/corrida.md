@@ -91,8 +91,76 @@ Se copia literal en los dos lados. Sin traducir, sin reordenar, sin renombrar.
 | Comando | Argumentos | Devuelve |
 |---|---|---|
 | `lanzar_corrida` | `proyecto: String`, `seco: bool` | `Result<(), String>` |
+| `leer_handoff` | `proyecto: String`, `id: String` | `Result<Handoff, String>` |
 
 `#[tauri::command(async)]`, como los ocho que ya hay.
+
+#### `leer_handoff`, y por que esta fila llego tarde
+
+**Esta fila faltaba, y costo la mitad de una funcionalidad.** La version anterior de
+este contrato mandaba leer `.vitral/handoffs/<id>.md` al pulsar un vidrio, lo describia
+en "La celda de detalle" y lo daba por hecho en su comprobacion manual — pero **su tabla
+de comandos solo traia `lanzar_corrida`**. La capacidad estaba contratada y sin ningun
+canal por donde pasar. El frontend llamo a un `leer_handoff` que nadie habia escrito, el
+`catch` se trago el rechazo, y la celda dijo `— sin handoff —` **siempre**, que es
+indistinguible de una tarea que no dejo ninguno.
+
+Se deja escrito porque es el fallo mas caro de este repositorio hasta la fecha y no lo
+detecto nadie: ni la revision, que comprobo las tablas de "Como se ve" y el grep del
+acoplamiento, ni el `cargo build`, que compila igual. **Una capacidad que no esta en la
+tabla de comandos no existe, por mucho que la prosa la describa.**
+
+#### La forma que devuelve
+
+```
+{ "tipo": "handoff" | "incompleto" | "nada", "texto": String }
+```
+
+**El comando resuelve cual de los dos archivos hay; el frontend no compone rutas.**
+Mira `<id>.md` y `<id>.INCOMPLETO.md` dentro de `.vitral/handoffs/` del proyecto, en ese
+orden, y dice cual encontro.
+
+Que lo resuelva Rust no es comodidad. El evento `cierre` trae `marca` con la ruta de la
+marca, y seria tentador que el frontend decidiera con eso: **solo acertaria durante la
+corrida.** Al abrir la ventana al dia siguiente y pulsar un vidrio no hay ningun evento,
+y ademas obligaria a JavaScript a componer rutas, que es justo lo que los nueve comandos
+existentes evitan.
+
+| Caso | `tipo` | `texto` |
+|---|---|---|
+| Existe `<id>.md` | `"handoff"` | El archivo entero |
+| Existe solo `<id>.INCOMPLETO.md` | `"incompleto"` | El archivo entero |
+| No existe ninguno | `"nada"` | `""` |
+| Existen **los dos** | `"handoff"` | El handoff. Ver abajo |
+
+**Si estan los dos, manda el handoff.** `registro.mjs` borra la marca cuando la tarea
+termina bien, asi que tenerlos los dos significa un `--solo` a medias: el handoff es el
+estado mas reciente.
+
+**Que no exista ninguno no es `Err`.** Es el caso normal. `Err` se reserva para un fallo
+de lectura de verdad y para un `id` invalido.
+
+**El `id` no puede llevar separador ni `:`.** Viene del flujo del motor, no de la
+persona, pero compone una ruta: un `../` dentro lo sacaria de `handoffs/` y de ahi a
+leer cualquier archivo del disco hay un paso. Sin separadores, `<id>.md` es siempre un
+nombre dentro de esa carpeta. Es la misma regla que el campo `plomos` del motor, con el
+mismo argumento, y aqui ademas es lectura de disco.
+
+**Tope de 64 KB por archivo.** Un handoff son dos o tres parrafos por convencion, no por
+limite: `extraerHandoff` se queda con todo lo que haya desde el ultimo `## Handoff`
+hasta el final de la respuesta, y un agente que se enrolle puede dejar cientos de KB que
+entrarian enteros en el DOM de la celda. Al pasarse, se corta y **se dice en el texto**,
+con esta linea literal al final:
+
+```
+[cortado a 64 KB]
+```
+
+La cuenta es de **bytes UTF-8**, no de caracteres, y el corte no parte un caracter por
+la mitad. Es un tope contra el accidente, no una regla de estilo: si alguna vez estorba,
+se sube en esta linea y en ningun otro sitio.
+
+---
 
 `proyecto` es la ruta **absoluta** del proyecto activo, igual que el `cwd` de un panel.
 Una corrida se direcciona por su proyecto, como un panel por su `id`. **No hay ningun
@@ -382,6 +450,31 @@ Sobre la rejilla `#0c0c0c`, con la monoespaciada del contrato, `'Cascadia Mono'`
 | El `error` | la frase del cierre, entera | `error-rejilla` `#ef4444` |
 | El handoff | lo que diga el archivo | `#cccccc` |
 | Sin handoff | `— sin handoff —` | `vacio-texto` |
+| **El rotulo de una marca** | `— esta tarea se corto y no dejo handoff. Lo de abajo lo escribio vitral —` | `error-rejilla` `#ef4444` |
+
+**El texto va tal cual, en monoespaciada, sin renderizar el markdown.** Los `**` y los
+`#` se ven. No se vendoriza ningun parser: son tres parrafos y `panel-pty.md` no anade
+dependencias a la ligera. `'Cascadia Mono'` a `12px`, `#cccccc`, con su propio scroll
+dentro de la celda — la celda no crece por lo que traiga el archivo.
+
+### La marca de incompleto se distingue, y no es decoracion
+
+Un `<id>.INCOMPLETO.md` **no lo escribio el agente: lo escribio vitral**, y lo primero
+que dice es que **no hay handoff**. Pintarlo igual que un handoff haria que se leyera
+como palabra del agente lo que es voz de la maquina, y ahi lo que se pierde no es
+estetica: es saber si alguien decidio algo o si nadie llego a decidir nada.
+
+Por eso lleva el rotulo de arriba **encima del texto**, en `error-rejilla`, y el cuerpo
+en `#cccccc` como cualquier handoff.
+
+Es la misma regla que el motor ya sigue al inyectar un handoff ausente en un prompt.
+`prompt.mjs` no lo mete callando: le pone encabezado propio y voz de sistema —
+`--- "X" se corto a medias y no dejo handoff ---` — exactamente para que el agente que
+lo lea no lo confunda con algo que otro agente dejo escrito. La ventana hace lo mismo
+para la persona que mira.
+
+**El rotulo no sustituye al titulo de la celda.** El titulo sigue siendo
+`<id> · <estado>` en `#fde047`: el estado ya viene del cierre y no se toca.
 
 **La etiqueta por vidrio levanta la prohibicion solo para vidrios.** `panel-pty.md` dice
 *"ningun panel lleva etiqueta ni titulo"* y *"la etiqueta se guarda para el modo
@@ -410,12 +503,26 @@ necesita porque no tiene prompt ni nadie que sepa que es.
 `rumbo.md` marcaba como deliberado que *"nada de la interfaz lee `.vitral/`... hasta la
 tanda que lo pida"*. Esta lo pide, y **por un milimetro**:
 
-> **`.vitral/handoffs/<id>.md` del proyecto activo, solo lectura, y solo al pulsar un
-> vidrio.**
+> **`.vitral/handoffs/<id>.md` y `.vitral/handoffs/<id>.INCOMPLETO.md` del proyecto
+> activo, solo lectura, y solo al pulsar un vidrio.**
 
-Ni logs, ni boceto, ni historial, ni marcas de incompleto. Si el archivo no esta, la
-celda dice `— sin handoff —` y no es un error. **Se lee al abrir la celda, no antes**:
-nada de precargarlos al recibir el cierre.
+Ni logs, ni boceto, ni historial. Si no esta ninguno de los dos, la celda dice
+`— sin handoff —` y no es un error. **Se leen al abrir la celda, no antes**: nada de
+precargarlos al recibir el cierre.
+
+**La marca de incompleto entra ahora, y la version anterior la excluia.** Decia *"ni
+marcas de incompleto"* y era el error de bulto de este contrato: **es el documento que
+mas falta hace leer.** Lo escribe `registro.mjs` cuando una tarea se corta por
+presupuesto o por timeout, y trae mas de lo que trae un handoff normal — la causa, el
+tope declarado, lo gastado, los turnos alcanzados, un diagnostico distinto segun por que
+murio, el aviso de que puede haber archivos a medio escribir, y tres pasos que seguir
+antes de relanzar con `--solo`. Justo cuando una tarea falla es cuando alguien abre la
+ventana a mirar, y era justo lo unico que no se le ensenaba.
+
+Sigue sin entrar todo lo demas, y sigue siendo por un milimetro: **dos nombres de
+archivo dentro de un directorio, compuestos por Rust, sin enumerar nada.** Ni un
+`readdir`, ni un vigia, ni una cache. Eso es lo que separa "leer `.vitral/`" de
+"mantener un modelo de `.vitral/`", que es lo que `rumbo.md` prohibe.
 
 ---
 
@@ -423,6 +530,16 @@ nada de precargarlos al recibir el cierre.
 
 | Caso | Que pasa |
 |---|---|
+| Se pulsa un vidrio y no hay ninguno de los dos archivos | `tipo: "nada"`, la celda dice `— sin handoff —` en `vacio-texto`. **No es un error** |
+| Se pulsa un vidrio que todavia esta en curso | Se lee igual, y casi siempre sale `"nada"`: el handoff se escribe al cerrar. No se reintenta ni se vigila |
+| Existen el handoff y la marca | Manda el handoff, sin rotulo. La marca no se ensena ni se menciona |
+| El archivo pasa de 64 KB | Se corta y la ultima linea es `[cortado a 64 KB]`, dentro del mismo texto |
+| El `id` lleva `/`, `\` o `:` | `Err` con `id de tarea invalido: "<id>"`. No se compone la ruta |
+| Fallo de lectura de verdad: permisos, disco | `Err`, y la celda pinta el error como cualquier otro. **No se confunde con "no hay"** |
+| Se cierra la celda mientras se esta leyendo | La respuesta llega a una celda cerrada y **se descarta**: nada de pintar sobre lo que ya no esta |
+| Se vuelve a pulsar el mismo vidrio | Se lee otra vez, entero. No se cachea: una tarea que cierre entremedias tiene handoff nuevo |
+| El proyecto activo cambia con una celda abierta | La celda es del vidrio de **su** corrida y no se repinta sola. La ruta del proyecto va en la celda, como el `cwd` de un panel |
+| El archivo no es UTF-8 valido | `Err`. El motor solo escribe UTF-8, asi que esto es disco corrupto y se dice, no se adivina |
 | `lanzar_corrida` con una corrida ya en marcha en ese proyecto | `Err`, y no se lanza un segundo proceso |
 | `node` no esta en el PATH | `Err` con el texto del sistema, y se pinta como cualquier error |
 | No existe `.vitral/boceto.json` | El motor emite `error` + `fin` con codigo 1. La corrida queda `rechazada` |

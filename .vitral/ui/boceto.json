@@ -1,54 +1,54 @@
 {
-  "nombre": "El modo corrida: la ventana lanza una tanda",
+  "nombre": "La ventana lee el handoff, y tambien la marca de incompleto",
   "tareas": [
     {
-      "id": "rust-corrida",
+      "id": "rust",
       "agente": "claude",
       "rutas": [
         "ui/src-tauri/src/main.rs"
       ],
-      "presupuesto": 9,
-      "timeout": 20,
-      "prompt": "Anade el modo corrida a la parte de Rust. Lee del plomo de la tanda, entero y antes de tocar nada: 'Como se lanza el motor', 'El catalogo IPC: lo que se anade' y la tabla 'Los bordes'.\n\nLo que haces: el comando lanzar_corrida(proyecto, seco) con #[tauri::command(async)] como los ocho que ya hay; el proceso lanzado con Command y stdout/stderr por tuberia; el hilo lector que acumula y corta por \\n; los eventos corrida:linea y corrida:fin; y corridas:activas anadido AL HILO TEMPORIZADOR QUE YA EXISTE, no a uno nuevo.\n\nTres cosas que no son opcionales. Primera: nada de PTY ni de shell para el motor. Un PTY parte las lineas al ancho y la linea mas larga del flujo son 86.690 caracteres; esta medido y esta en el plomo. Segunda: el lector emite SOLO lineas completas, y el resto sin salto de linea al cerrarse la tuberia se descarta. Tercera: Rust reenvia la linea tal cual y NO parsea ni un campo del JSON; quien interpreta es ui/web/corrida.js, y si te encuentras mirando dentro de la linea, te saliste del contrato.\n\ncorrida:fin se emite exactamente una vez, como panel:fin. Y al cerrar la ventana se matan los paneles como ya se hacia pero NO se mata el proceso del motor: la seccion 'Al cerrar la ventana, la corrida sigue' explica por que y no es un descuido.\n\nNo anadas ninguna dependencia: std::process::Command basta. No toques Cargo.toml, Cargo.lock ni capabilities/default.json. Comprueba con: cargo build --manifest-path ui/src-tauri/Cargo.toml"
-    },
-    {
-      "id": "flujo",
-      "agente": "claude",
-      "rutas": [
-        "ui/web/corrida.js"
+      "plomos": [
+        "panel-pty.md",
+        "corrida.md"
       ],
-      "presupuesto": 9,
+      "presupuesto": 6,
       "timeout": 20,
-      "prompt": "Escribe ui/web/corrida.js, un archivo nuevo. Es la UNICA pieza de la interfaz que conoce el catalogo de eventos del motor: traduce el flujo JSON a la forma interna, y el resto de la interfaz no ve un evt en su vida. Lee del plomo 'Quien conoce el catalogo de eventos del motor', 'La forma interna: lo que expone corrida.js' y 'Los siete estados de un vidrio'.\n\nExpones tres funciones: arrancar(proyecto, { seco }), alCambiar(fn) y olvidar(proyecto). alCambiar recibe la corrida ENTERA ya recalculada, no un parche: quien pinta repinta con lo que recibe. Un escuchador de corrida:linea y uno de corrida:fin, montados una sola vez y nunca desmontados, como los de panel.\n\nEste es el catalogo de eventos del motor. Su origen unico es .vitral/plomo/motor.md, que esta tanda no lee; esta copia vive aqui y solo aqui:\n\nTodo evento es una linea JSON con evt y t delante. corrida{nombre,boceto,rama,plomo,olas,solo,otraTanda} — olas son los IDS de cada ola, [[\"a\",\"b\"],[\"c\"]], y de ahi salen todos los vidrios antes de que arranque ninguno. veredicto{nivel,mensaje,sugerencia,detalles}. saltada{id,handoff} una por tarea. prompt{ola,id,agente,bytes,texto}. ola{ola,total,cuantas}. arranque{id,agente,rutas}. latido{id,ms}. cierre{id,ok,ms,costo,turnos,denegaciones,handoff,motivo,error,marca} — denegaciones es la CUENTA, motivo es el codigo de maquina y error la frase en castellano. fallo{ola,ids,logs}. resumen{costoTotal,ms,repo,diff,sinRastrear,fuera}. error{mensaje,sugerencia}. fin{ok,codigo,seco}. Los indices de ola van en base 1. Los campos siempre estan: lo ausente es null o [].\n\nDos bordes que no puedes saltarte: una linea que no parsee se ignora y se cuenta, y NUNCA revienta el escuchador; y al llegar fallo, todo vidrio que siga en esperando pasa a 'no llego a correr', que es el estado que se cae si nadie lo escribe.\n\nvidrios va en orden de ola aplanando corrida.olas, y ese orden no cambia nunca. No es orden de llegada.\n\nNo pintes nada: este archivo no toca el DOM. Otro agente esta escribiendo panel.js e index.html contra la forma interna del plomo; no los abras."
+      "prompt": "Extiende leer_handoff para que tambien encuentre la marca de incompleto y devuelva de cual de los dos se trata. Lee del plomo de la tanda, entero y antes de tocar nada: 'leer_handoff, y por que esta fila llego tarde', 'La forma que devuelve', 'Lo que se lee de .vitral/, y nada mas' y las diez primeras filas de la tabla 'Los bordes'.\n\nEMPIEZAS CON TRABAJO HECHO, Y ES BUENO. leer_handoff ya existe en main.rs, ya esta registrado en el invoke_handler y ya compila: lo escribio una corrida anterior. Ya valida el id contra separadores y contra ':', ya devuelve cadena vacia cuando el archivo no esta, y ya normaliza la ruta del proyecto. Nada de eso se rehace.\n\nLo que le falta son dos cosas. Primera: hoy solo mira <id>.md. Tiene que mirar tambien <id>.INCOMPLETO.md, en ese orden. Segunda: hoy devuelve Result<String, String> y tiene que devolver una estructura con tipo y texto, serializada como dice el plomo: tipo es \"handoff\", \"incompleto\" o \"nada\", y texto es el archivo entero o la cadena vacia. Deriva Serialize; no anadas ninguna dependencia, serde ya esta.\n\nSi estan los dos archivos manda el handoff, sin mencionar la marca. Que no exista ninguno NO es Err: es tipo \"nada\", y es el caso normal. Err se queda para un id invalido y para un fallo de lectura de verdad, que son cosas distintas de \"no hay\" y no se pueden confundir.\n\nEl tope de 64 KB es nuevo y es de bytes UTF-8, no de caracteres, y el corte NO parte un caracter por la mitad. Al cortar, la ultima linea del texto es exactamente '[cortado a 64 KB]'. Esta literal en el plomo: copiala.\n\nY corrige el comentario de doc que dejo la corrida anterior. Dice 'ni marcas de incompleto' y dice que el comando no esta en la tabla del catalogo IPC del plomo. Las dos cosas han dejado de ser verdad: la fila esta en la tabla y la marca entra. Un comentario que contradice al contrato es peor que no tenerlo.\n\nNo toques ningun otro comando, ni el hilo temporizador, ni capabilities/default.json —un comando propio no lleva entrada ahi— ni Cargo.toml. Comprueba con: cargo build --manifest-path ui/src-tauri/Cargo.toml, sin errores ni avisos propios. Otro agente esta escribiendo la celda contra la forma contratada; no abras ui/web/."
     },
     {
-      "id": "barra",
+      "id": "celda",
       "agente": "claude",
       "rutas": [
         "ui/web/panel.js",
         "ui/web/index.html"
       ],
-      "presupuesto": 12,
-      "timeout": 25,
-      "prompt": "Pinta el modo corrida en la barra lateral y la celda de detalle. Lee del plomo la seccion 'Como se ve' ENTERA —la fila de un vidrio, los siete estados con sus colores y formas, la animacion, el indicador y la celda de detalle—, mas 'La forma interna' y los bordes que hablan de pulsar un vidrio.\n\nConsumes corrida.js, que escribe otro agente: arrancar, alCambiar y olvidar. Tu no parseas eventos y no debes escribir en tu codigo ni un nombre de evento del motor. Se comprueba con grep y es contrato.\n\nLos valores son literales y estan en las tablas: fila de 28px con sangria de 30px, id a 11px en #2e2b1c, datos a 10px en #665f4a con tabular-nums. Los siete estados con su color y su FORMA: la forma lleva el estado y el color lo refuerza, porque ok contra FALLO esta medido a 1.83:1 y es el techo. Animacion: 220ms ease-out, opacity mas translateY(-4px), escalonado CERO, y en los cambios de estado se funde SOLO la marca y la fila no se mueve.\n\nprefers-reduced-motion: reduce es obligacion, no mejora. Apaga las tres: la entrada de la fila, el fundido de la marca y los cuatro cuadros de 'en curso'. El plomo trae el bloque CSS.\n\nLa celda de detalle es una celda como cualquier otra: cuenta para el tope de cuatro y convive con los paneles de shell en la misma rejilla. Ahi es donde se lee .vitral/handoffs/<id>.md del proyecto activo, solo lectura y solo al pulsar, y nada mas de .vitral/.\n\nEl indicador de la fila del proyecto se enciende con paneles:ocupados O con corridas:activas: las dos senales las resuelve Rust y tu solo las juntas."
+      "plomos": [
+        "panel-pty.md",
+        "corrida.md"
+      ],
+      "presupuesto": 8,
+      "timeout": 20,
+      "prompt": "Pinta en la celda de detalle lo que devuelve leer_handoff, distinguiendo la marca de incompleto. Lee del plomo de la tanda 'La forma que devuelve' con su tabla de casos, 'La celda de detalle' entera, 'La marca de incompleto se distingue, y no es decoracion' y las diez primeras filas de 'Los bordes'.\n\nLo que ya hay en panel.js: la clase de la celda, leerHandoff(), el SIN_HANDOFF y el CSS de .detalle .handoff en index.html. Se conserva la forma: se lee UNA VEZ al abrir la celda, nunca antes y nunca en cada repintado. Eso es contrato y esta razonado en el codigo.\n\nLo que cambia: leer_handoff ya no devuelve una cadena, devuelve { tipo, texto }. tipo vale \"handoff\", \"incompleto\" o \"nada\". Con \"nada\" la celda sigue diciendo el guion largo de siempre en vacio-texto. Con \"handoff\" se pinta el texto como hoy. Con \"incompleto\" se pinta el texto IGUAL pero con un rotulo encima, y el rotulo esta literal en la tabla de 'La celda de detalle': copialo caracter a caracter, en error-rejilla #ef4444.\n\nEse rotulo es la mitad del trabajo y no es decoracion: un INCOMPLETO lo escribio vitral, no el agente, y lo primero que dice es que no hay handoff. Sin el rotulo se lee como palabra del agente lo que es voz de la maquina. El plomo lo razona con el precedente de prompt.mjs.\n\nEl texto va TAL CUAL, en monoespaciada, sin renderizar el markdown: los ** y los # se ven. No vendorices ningun parser ni escribas reemplazos a mano. 'Cascadia Mono' a 12px, #cccccc, con su propio scroll dentro de la celda: la celda NO crece por lo que traiga el archivo, que es lo que romperia la rejilla.\n\nDos bordes que se cuelan solos y estan en la tabla: si la celda se cierra mientras se esta leyendo, la respuesta se descarta y no se pinta sobre lo que ya no esta; y un Err de verdad —permisos, id invalido, disco— se pinta como error y NO se confunde con \"no hay\". Hoy el catch los iguala a los dos, y eso es justo lo que hay que dejar de hacer.\n\nEl titulo de la celda sigue siendo <id> · <estado> en #fde047 y no se toca. No toques corrida.js: no conoce este comando y no tiene por que. No cambies los siete rotulos ni sus colores."
     },
     {
       "id": "revision",
       "agente": "claude",
       "necesita": [
-        "rust-corrida",
-        "flujo",
-        "barra"
+        "rust",
+        "celda"
       ],
       "rutas": [
         "ui/src-tauri/src/main.rs",
-        "ui/web/corrida.js",
         "ui/web/panel.js",
         "ui/web/index.html"
       ],
-      "presupuesto": 30,
-      "timeout": 30,
-      "prompt": "Revisa la tanda entera contra el plomo. Lee antes los handoffs de arriba, sobre todo lo que cada uno anoto en 'Me desvie'.\n\nLo primero, porque es lo unico que se puede comprobar sin ojos: cargo build --manifest-path ui/src-tauri/Cargo.toml sin errores ni avisos propios. Y el grep del acoplamiento: los nombres de evento del motor tienen que aparecer en UN SOLO archivo de ui/, que es ui/web/corrida.js. Si salen en dos, es hallazgo y va en tu handoff.\n\nDespues, contra las tablas: los valores de 'Como se ve' son literales y se comparan uno a uno —28px, 30px, 11px, 10px, 220ms, escalonado cero, los siete colores y las siete formas—. Un valor que no cuadre con la tabla es un fallo aunque se vea bien.\n\nLos sitios donde ya se ha colado algo antes en este repositorio, y hay que mirarlos: que el bloque de prefers-reduced-motion apague las TRES animaciones y no dos; que al llegar fallo los vidrios de olas posteriores pasen a 'no llego a correr' y no se queden en esperando; que el lector de Rust no emita lineas incompletas; que Rust no parsee ni un campo del JSON; que corrida:fin se emita exactamente una vez; y que al cerrar la ventana se maten los paneles pero NO el motor.\n\nCorrige las diferencias pequenas que encuentres, dentro de tus rutas. Si el desacuerdo es de fondo, no elijas tu: dejalo escrito y di quien se aparto del contrato. Y si encuentras algo que el plomo no cubria, dilo tambien: eso es fallo del plomo, no del agente que lo interpreto.\n\nTu handoff NO dice 'funciona': dice que compila, y deja tachada la parte de la lista de comprobacion manual que hayas podido verificar de verdad, diciendo cual no."
+      "plomos": [
+        "panel-pty.md",
+        "corrida.md"
+      ],
+      "presupuesto": 10,
+      "timeout": 25,
+      "prompt": "Revisa la tanda contra el plomo. Lee antes los handoffs de arriba, sobre todo lo que cada uno anoto en 'Me desvie'.\n\nLo primero, y es lo unico que se comprueba sin ojos: cargo build --manifest-path ui/src-tauri/Cargo.toml sin errores ni avisos propios.\n\nDespues, LA COMPROBACION QUE ESTA TANDA EXISTE PARA HACER, y hazla aunque parezca absurda: que cada comando que el frontend invoca esta de verdad registrado en el invoke_handler de main.rs. Saca con grep todos los invoke('...') de ui/web/ y comparalos uno a uno con la lista del generate_handler. Esta tanda existe porque la anterior contrato leer_handoff en prosa, el frontend lo llamo, y NADIE lo escribio: el catch se tragaba el rechazo y la celda decia 'sin handoff' siempre. Compilaba igual y la revision anterior no lo vio. Si sobra o falta uno, es el hallazgo.\n\nY la comprobacion hermana, sobre el contrato: que todo comando registrado este en la tabla del catalogo IPC de corrida.md o de panel-pty.md. Una capacidad que no esta en la tabla no existe, por mucho que la prosa la describa.\n\nDespues, contra el contrato:\n\n- Los cuatro casos de la tabla de 'La forma que devuelve': handoff, solo marca, ninguno, y los dos a la vez —donde manda el handoff y la marca ni se menciona—.\n- Que 'no hay ninguno' sea tipo \"nada\" y NO Err, y que un Err de verdad se pinte distinto. Son dos cosas que el codigo viejo igualaba.\n- Que el tope de 64 KB cuente BYTES UTF-8 y no parta un caracter, y que la linea de corte sea exactamente '[cortado a 64 KB]'.\n- Que el rotulo del INCOMPLETO salga caracter a caracter como la tabla, en #ef4444, encima del texto y sin tocar el titulo de la celda.\n- Que el texto NO se renderice: ni parser vendorizado, ni reemplazos a mano. Los ** se ven.\n- Que la celda no crezca con el archivo: el scroll es de dentro.\n- Que el comentario de doc de leer_handoff ya no diga 'ni marcas de incompleto'.\n\nDeja tachada la parte de la lista de comprobacion manual que hayas podido verificar de verdad, diciendo cual no. Tu handoff NO dice 'funciona': dice que compila. Y si encuentras algo que el plomo no cubria, dilo: eso es fallo del plomo, no del agente que lo interpreto."
     }
   ]
 }
