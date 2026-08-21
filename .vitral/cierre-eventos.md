@@ -49,7 +49,23 @@ una regla, no una preferencia.
 Queda anotado para **quien planifique la tanda de la interfaz**, que es cuando
 habra un caso concreto delante con el que decidirlo.
 
-### 2. La lista de cierre de `planificador.md`
+### 2. Dos candidatos para la tanda siguiente del motor
+
+Salieron de esta tanda, los dos son cambios del motor y por eso no entraron aqui.
+
+**La corrida que mas necesita el resumen es justo la que falla, y es la unica que
+no lo imprime.** `vitral.mjs` hace `if (fallidas.length > 0) { avisoFallo(); return 1; }`
+y se salta `salida.resumen()`. El dato de "fuera de ruta" **si se calcula y si se
+guarda** —el historial de la corrida `20260820-230341` tiene
+`["pruebas/.bloques.txt","pruebas/.chunks.js"]`— pero no se enseña. Solo aparece
+haciendo `--historial <id>`, que es justo lo que nadie hace despues de un fallo.
+
+**`motor.md` paso de 27,4 KB a 40,7 KB** al entrar el catalogo de eventos. Es
+contrato permanente: esos 13 KB los paga cada vidrio de cada tanda futura, en cada
+turno, como cache leida. Vale la pena mirar si esas 243 lineas se pueden apretar
+sin perder contrato.
+
+### 3. La lista de cierre de `planificador.md`
 
 **Es la tercera vez que el paso de borrar los handoffs del cierre se olvida.** Los
 huerfanos de la tanda de la interfaz —`cuadricula.md`, `final.md`, `panel.md`,

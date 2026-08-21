@@ -115,12 +115,36 @@ que disparan la marca de corte incompleto. `error` es el texto ya legible.
 ### `veredicto` — lo que dice una comprobacion
 
 ```
-{ nivel: 'aborta' | 'avisa', mensaje, sugerencia }
+{ nivel: 'aborta' | 'avisa', mensaje, sugerencia, detalles }
 ```
 
 `aborta` es "no se puede lanzar esto". `avisa` es "se puede, pero que conste".
 Una lista vacia es "nada que decir". Un veredicto no imprime ni decide: quien lo
 recibe hace las dos cosas.
+
+| Campo | Tipo | Regla |
+|---|---|---|
+| `nivel` | `'aborta'` \| `'avisa'` | |
+| `mensaje` | string | Puede llevar `\n` |
+| `sugerencia` | string \| null | `avisa` la deja siempre en `null` |
+| `detalles` | string[] | La lista, un elemento por linea. **Siempre un array**; vacio si no hay |
+
+> **Ni `mensaje`, ni `sugerencia`, ni ningun elemento de `detalles` llevan
+> espacios de sangria. Los `\n` que lleven son saltos de linea deliberados.**
+
+La sangria de las lineas de continuacion —ocho espacios detras de `vitral: `,
+siete detras de `aviso: `— la pone `salida.mjs` al pintar, que es donde vive la
+maquetacion por la invariante 1. Antes la ponia cada guardarrail, lo que le
+obligaba a saber que funcion iba a pintarlo y cuanto media su prefijo; y en un
+evento JSON esa sangria seria basura dentro de un campo de datos.
+
+`detalles` existe por lo mismo: los choques de rutas de `revisarSolapamientos` y
+los cwd fuera de la raiz de `revisarCwd` son **una lista de cosas**, y estaban
+aplanados en prosa dentro del `mensaje`. Quien pinta los recorre; quien emite los
+manda como array. Un `avisa` con `detalles` no lo produce hoy ninguna
+comprobacion, y el pintor los recorre igual, sin caso especial.
+
+El orden al pintar es **mensaje, detalles, sugerencia**.
 
 ### `plan` — lo que circula por la corrida
 
@@ -142,9 +166,11 @@ compartida del motor.
 Todo lo que ve el usuario.
 
 ```
-formatearDuracion(ms) -> string          formatearCosto(usd) -> string
-imprimirError(mensaje, sugerencia)       imprimirAviso(mensaje)
-imprimirAyuda()
+modoJson(activo)                         formatearDuracion(ms) -> string
+formatearCosto(usd) -> string            imprimirAyuda()
+imprimirError(mensaje, sugerencia, detalles = [])
+veredicto({ nivel, mensaje, sugerencia, detalles })
+fin({ ok, codigo, seco })
 cabecera({ nombre, rutaBoceto, rama, plomo, olas, solo, otraTanda })
 lineasSaltadas(saltadas, ancho, fechas)
 imprimirPrompt(indice, tarea, prompt)    finEnsayo()
@@ -153,6 +179,8 @@ lineaLatido(id, ancho, ms)               finOla()
 lineaCierre({ tarea, ancho, resultado, huboHandoff, rutaMarca, raiz })
 avisoFallo(fallidas, indice)
 resumen({ costoTotal, ms, repo, diff, sinRastrear, fuera })
+listaHistorial(corridas)                 historialVacio()
+detalleCorrida(corrida)
 ```
 
 `otraTanda` es el campo que le llega a `cabecera` desde `cargarHandoffs`. Cuando
@@ -168,10 +196,207 @@ boceto .vitral/boceto.json · rama feat/x · plomo 2 archivos (33.1 KB) · olas 
 En singular, `1 handoff en disco es de la tanda "...": se ignora`. Con
 `otraTanda` en `null` no se imprime nada: la cabecera es la de siempre.
 
+`imprimirAviso(mensaje, detalles)` **existe pero no se exporta.** Su unico
+llamador era `resolver()` en `vitral.mjs`, y `veredicto()` lo absorbio: ahora la
+decision de si un veredicto se pinta como error o como aviso vive aqui, que es
+donde vive la presentacion. Sigue dentro del modulo, fuera del `export`.
+
 **No le corresponde:** decidir nada. No aborta, no llama a `process.exit`, no
 lee el disco, no pregunta a git, no calcula lo que muestra. Recibe datos ya
 cocinados. Si una funcion de aqui necesita ir a buscar un dato, el dato deberia
 llegar como parametro.
+
+#### El modo json
+
+`node vitral.mjs --json` corre exactamente lo mismo, emitiendo **un evento JSON
+por linea** en vez del texto pintado. Es lo que va a leer la interfaz grafica que
+anticipa la invariante 1.
+
+> **Quien corre `vitral` sin la bandera ve exactamente lo mismo que veia antes.
+> Ni una coma.** Cualquier cambio en el texto pintado es un fallo, aunque el JSON
+> salga perfecto.
+
+`vitral.mjs` detecta `--json` en un **prescan** sobre `process.argv`, antes de
+`parsearBanderas`, y llama a `modoJson(true)` de inmediato. Sin eso, una bandera
+desconocida lanzaria su `ErrorVitral` antes de haberse leido `--json`, y la
+interfaz recibiria texto pintado justo en el caso de error. `--seco` se lee en el
+mismo prescan porque el evento `fin` lo necesita fuera de `principal()`. El
+prescan es un `includes` pelado: una tarea cuyo id fuera literalmente `--json` lo
+confundiria, y eso no se soporta.
+
+`--json` **sustituye** al texto, no convive con el:
+
+| Canal | Con `--json` |
+|---|---|
+| `stdout` | **Solo eventos JSON.** Una linea, un evento. Nunca otra cosa |
+| `stderr` | La catastrofe: la traza de un error que ni el `.catch` de `vitral.mjs` supo capturar. En una corrida normal queda vacio |
+
+Eso mueve de canal dos cosas que sin la bandera van a `stderr` —los errores de
+`imprimirError` y el aviso de fallo de una ola— para que la interfaz lea un solo
+canal y nunca tenga que olfatear si una linea es JSON. **Los codigos de salida
+son identicos con y sin bandera:** la bandera cambia como se dice lo que pasa, no
+lo que pasa.
+
+**`--json` no da streaming del trabajo del agente**, y conviene decirlo porque es
+lo primero que se malinterpreta. Los momentos del flujo son exactamente los que el
+motor ya tenia: arranque, latido cada 60 s, cierre. `agentes.mjs` declara
+`salidaEnStreaming`, pero `proceso.mjs` acumula stdout y solo lo parsea al cerrar:
+ver a un vidrio teclear es otra cosa y no depende de esta bandera.
+
+`modoJson(true)` **vacia la paleta entera**, igual que ya hace la ausencia de
+TTY, para que ningun codigo ANSI acabe dentro del JSON al correr `--json` en una
+terminal de verdad. Por eso `C` es reasignable y no un `const` calculado al
+importar.
+
+Las dos piezas que sostienen el modo:
+
+```js
+let json = false;
+
+const emitir = (evt, datos) =>
+  process.stdout.write(JSON.stringify({ evt, t: new Date().toISOString(), ...datos }) + '\n');
+```
+
+> **Ninguna funcion exportada cambia de firma salvo `imprimirError`. Cada una
+> decide por dentro si pinta o si emite**, con un `if (json) return emitir(...)`
+> al principio. Con las firmas quietas, **`src/corrida.mjs` no se toca ni una
+> linea** y sigue sin enterarse de que existe un modo json. Los parametros que
+> solo sirven para maquetar —`ancho` en `lineaArranque`, `lineaLatido` y
+> `lineaCierre`— se ignoran al emitir.
+
+**Cuatro reglas del flujo**, y las cuatro importan:
+
+1. **Los campos siempre estan.** Un dato ausente es `null` o `[]`, nunca un campo
+   que falta. La interfaz no distingue "no vino" de "vino vacio".
+2. **Numeros crudos.** `ms` es milisegundos, `costo` es dolares.
+   `formatearDuracion` y `formatearCosto` no aparecen jamas en un evento:
+   formatear es de quien pinta.
+3. **Las rutas van con barras hacia delante**, tambien en Windows:
+   `.split(path.sep).join('/')`.
+4. **El evento nunca lleva la salida cruda del agente.** Eso ya esta entero en
+   `.vitral/logs/<id>.json`, y esa disposicion es de `registro.mjs`.
+
+Todo evento lleva dos campos primero, siempre, en este orden: `evt`, el nombre; y
+`t`, un `new Date().toISOString()`. Despues, su carga.
+
+**No hay campo de version, y es a proposito.** El motor y la interfaz viven en el
+mismo repositorio y se mueven juntos: no hay compatibilidad de cable que
+resolver, y un numero que nadie tiene motivo para incrementar va a mentir la
+primera vez que alguien cambie un campo sin tocarlo. Cuando exista un consumidor
+que no se despliegue con el motor, se anade entonces, con un motivo.
+
+##### El catalogo de eventos
+
+**Esta tabla es el origen unico.** Los nombres de eventos y de campos se copian
+de aqui, literalmente, sin reordenar ni renombrar. Cada uno sale de una funcion
+que `salida.mjs` ya tenia: la lista de momentos no se invento, es la que el motor
+ya reconocia.
+
+| Funcion de `salida.mjs` | `evt` | Campos, despues de `evt` y `t` |
+|---|---|---|
+| `cabecera` | `corrida` | `nombre`, `boceto`, `rama`, `plomo`, `olas`, `solo`, `otraTanda` |
+| `veredicto` | `veredicto` | `nivel`, `mensaje`, `sugerencia`, `detalles` |
+| `lineasSaltadas` | `saltada` | `id`, `handoff` — **una por tarea saltada** |
+| `imprimirPrompt` | `prompt` | `ola`, `id`, `agente`, `bytes`, `texto` |
+| `cabeceraOla` | `ola` | `ola`, `total`, `cuantas` |
+| `lineaArranque` | `arranque` | `id`, `agente`, `rutas` |
+| `lineaLatido` | `latido` | `id`, `ms` |
+| `lineaCierre` | `cierre` | `id`, `ok`, `ms`, `costo`, `turnos`, `denegaciones`, `handoff`, `motivo`, `error`, `marca` |
+| `avisoFallo` | `fallo` | `ola`, `ids`, `logs` |
+| `resumen` | `resumen` | `costoTotal`, `ms`, `repo`, `diff`, `sinRastrear`, `fuera` |
+| `imprimirError` | `error` | `mensaje`, `sugerencia` |
+| `imprimirAyuda` | `ayuda` | `texto` |
+| `listaHistorial` / `historialVacio` | `historial` | `corridas` |
+| `detalleCorrida` | `detalle` | `corrida` |
+| `fin` | `fin` | `ok`, `codigo`, `seco` |
+| `finOla` | — | **no emite nada** |
+| `finEnsayo` | — | **no emite nada** |
+
+Lo que no es evidente de cada campo:
+
+- **`corrida`** — `boceto` es la ruta tal cual la escribio la persona, con barras
+  normalizadas. `rama` es `null` sin git: en texto se pinta `sin git`, pero eso
+  es presentacion. `plomo` es `{ archivos: string[], bytes: number }` con los
+  **nombres** de los archivos, no la cuenta. `olas` son **los ids de cada ola**
+  —`[["backend","frontend"],["revision"]]`—, no las cuentas: de ahi sale el
+  `2 -> 1` que se pinta, y es lo que permite que el evento `ola` no cambie la
+  firma de `cabeceraOla`. `solo` y `otraTanda` son los mismos objetos que recibe
+  `cabecera`, o `null`.
+- **`saltada`** — un evento **por tarea saltada**, ninguno si no hay ninguna.
+  `handoff` es la fecha en ISO, del `Date` que trae el mapa `fechas`.
+- **`prompt`** — `texto` es **el prompt entero**: ensenar los prompts es lo que
+  es `--seco`. `bytes` es `Buffer.byteLength(prompt, 'utf8')`.
+- **`cierre`** — `denegaciones` es **la cuenta**, no la lista: el detalle ya esta
+  en el log, que es la misma decision que ya tomaba `registroDeCorrida`.
+  `motivo` es el codigo de maquina (`error_max_budget_usd`); `error` es la frase
+  en castellano que sale de `MOTIVOS_CLAUDE`. `marca` es la ruta relativa a la
+  raiz, o `null`. Un cierre que fue bien lleva `error: null`,
+  `motivo: "success"`, `marca: null`.
+- **`fallo`** — `ids` van **sin las comillas** que les pone el texto, y `logs`
+  son `.vitral/logs/<id>.json` con barras hacia delante.
+- **`resumen`** — `diff` es la cadena cruda de `git diff --stat`, sin partir ni
+  recortar. `sinRastrear` y `fuera` van **enteros**: el recorte a diez que hace
+  el texto es presentacion.
+- **`error`** — `detalles` no viaja aqui: nada que llame a `imprimirError` fuera
+  de `veredicto` las produce. Un `error` y un `veredicto` de nivel `aborta` son
+  **dos eventos distintos a proposito**, y es la distincion de la invariante 2:
+  un `ErrorVitral` es "el plan no se puede ni intentar"; un veredicto que aborta
+  es un juicio sobre un plan que si se entiende.
+- **`historial`** — **un solo evento con el array dentro**, no uno por fila: es
+  una consulta con respuesta finita, no un flujo de momentos. Vacio, `corridas`
+  es `[]` y no hay ningun otro evento: eso sustituye a `historialVacio`.
+
+**Todos los indices de ola van en base 1**, como en pantalla. Dos numeraciones
+para la misma cosa es la trampa de catalogo de siempre.
+
+> **Exactamente un evento `fin` cierra toda invocacion**, incluidas las que
+> abortan por un guardarrail, las que revientan con un `ErrorVitral` y las de
+> `--ayuda`. La interfaz no tiene que deducir el final de la muerte del proceso.
+> Si no llega un `fin`, el motor se murio de algo que nadie previo.
+
+**`finOla()` y `finEnsayo()` no emiten nada, y no es un olvido.** En modo texto
+siguen pintando lo de siempre; el final del ensayo ya lo dice el `fin` con
+`seco: true`, y la linea en blanco entre olas es maquetacion pura. Se escribe
+aqui para que nadie las "arregle".
+
+**`corrida` no es siempre el primer evento.** `revisarRama` y `revisarBoceto`
+corren antes que `cabecera`, asi que un `veredicto` puede llegar antes; y si
+alguno aborta, no llega ningun `corrida` en toda la invocacion. La interfaz no
+puede dar por hecha una cabecera.
+
+##### Los bordes
+
+| Situacion | Que sale |
+|---|---|
+| Bandera desconocida | `error` + `fin` codigo 1. Lo salva el prescan |
+| No hay boceto | `error` + `fin` codigo 1 |
+| `--ayuda` | `ayuda` + `fin` codigo 0. Nada mas |
+| `--historial` sin ninguna corrida guardada | **un** `historial` con `corridas: []` + `fin` codigo 0 |
+| `--historial <id>` que no existe | `error` + `fin` codigo 1 |
+| Un guardarrail aborta | `veredicto` con `nivel: "aborta"` + `fin` codigo 1 |
+| `--seco` y ninguna tarea saltada | Ningun evento `saltada`. No se emite nada en su lugar |
+| La corrida falla en una ola | Los `cierre` de esa ola, luego `fallo`, luego `fin` codigo 1. **No hay `resumen`**: en texto tampoco lo hay |
+| Un error que no es `ErrorVitral` | `error` con la primera linea de la traza en `sugerencia`, igual que en texto, + `fin` codigo 1 |
+| Un latido sin nada en vuelo | No pasa: el mapa esta vacio y el bucle no itera |
+
+##### Un flujo entero
+
+Salida literal de `node vitral.mjs --seco --json --boceto ejemplo/boceto.json`,
+con `stderr` vacio y codigo 0. **Solo se recorta el campo `texto` de los tres
+eventos `prompt`** —el prompt entero mide entre 4 y 5 KB—; todo lo demas va tal
+cual salio:
+
+```
+{"evt":"corrida","t":"2026-08-21T03:04:10.024Z","nombre":"Modulo de estados de pedido","boceto":"ejemplo/boceto.json","rama":"feat/eventos","plomo":{"archivos":["estados-pedido.md"],"bytes":2004},"olas":[["backend","frontend"],["revision"]],"solo":null,"otraTanda":null}
+{"evt":"prompt","t":"2026-08-21T03:04:10.026Z","ola":1,"id":"backend","agente":"claude","bytes":4438,"texto":"# Vitral · tarea \"backend\"\n\nEstas trabajando dentro de un vitral: co [...]"}
+{"evt":"prompt","t":"2026-08-21T03:04:10.026Z","ola":1,"id":"frontend","agente":"claude","bytes":4445,"texto":"# Vitral · tarea \"frontend\"\n\nEstas trabajando dentro de un vitral: c [...]"}
+{"evt":"prompt","t":"2026-08-21T03:04:10.026Z","ola":2,"id":"revision","agente":"claude","bytes":5352,"texto":"# Vitral · tarea \"revision\"\n\nEstas trabajando dentro de un vitral, p [...]"}
+{"evt":"fin","t":"2026-08-21T03:04:10.026Z","ok":true,"codigo":0,"seco":true}
+```
+
+`--seco` no ejecuta nada, asi que no hay `ola`, ni `arranque`, ni `latido`, ni
+`cierre`, ni `resumen`: el ensayo va de `corrida` a `fin` pasando por los
+prompts. Este bloque se regenera corriendo el comando, nunca a mano.
 
 ### `src/errores.mjs`
 
@@ -443,10 +668,25 @@ La cuenta es la misma que usa `revisarCwd`: resolver contra la raiz y mirar si l
 relativo empieza por `..`, contando tambien el caso de otra unidad de Windows,
 que tambien es estar fuera. No mira si el archivo existe: de eso ya se encarga
 `leerBoceto` con su propio error, asi que una ruta que no existe pero cae dentro
-de la raiz no le arranca ningun veredicto. El mensaje, literal:
+de la raiz no le arranca ningun veredicto. El veredicto, literal —sin un solo
+espacio de sangria, que es lo que contrata la forma `veredicto`:
+
+```js
+{
+  nivel: 'aborta',
+  mensaje: 'el boceto "C:/otro/.vitral/boceto.json" cae fuera del repositorio.',
+  sugerencia: 'sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.\n'
+    + 'corre vitral desde el proyecto al que pertenece el boceto',
+  detalles: [],
+}
+```
+
+La `sugerencia` lleva un `\n` entre sus dos lineas y nada mas: los ocho espacios
+que se ven en la terminal detras de `vitral: ` los pone `salida.mjs` al pintar.
+Pintado sale igual que siempre, byte a byte:
 
 ```
-el boceto "C:/otro/.vitral/boceto.json" cae fuera del repositorio.
+vitral: el boceto "C:/otro/.vitral/boceto.json" cae fuera del repositorio.
         sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.
         corre vitral desde el proyecto al que pertenece el boceto
 ```
@@ -502,8 +742,15 @@ saber que hay en vuelo, usa eso, no montes otro registro.
 La entrada. Parsea banderas, arma el plan, delega, y decide el codigo de salida.
 
 Es el unico sitio que llama a `process.exit` y el unico que captura
-`ErrorVitral`. Su funcion `resolver(veredictos)` es la que imprime lo que dicen
-los guardarrailes y responde si alguno impide lanzar.
+`ErrorVitral`. Su funcion `resolver(veredictos)` pasa cada veredicto a
+`salida.veredicto()` y responde si alguno impide lanzar. **No decide como se
+muestra ninguno:** repartir entre error y aviso es de `salida.mjs`.
+
+El **prescan** de `--json` y de `--seco` sobre `process.argv` vive aqui, antes de
+`parsearBanderas`, y tambien el evento `fin`: en el `.then` con el codigo que
+devolvio `principal()`, y en el `.catch` con codigo `1`, despues del
+`imprimirError` que ya habia. `--json` **no** entra en `registroDeCorrida`: el
+historial guarda lo que paso en la corrida, no como se conto.
 
 **No le corresponde:** engordar. Si te encuentras anadiendo logica aqui, casi
 siempre pertenece a un modulo de `src/`.
@@ -536,6 +783,7 @@ dan de verdad:
 | Cambiar como se lanza o se mata un proceso, o el timeout | `proceso.mjs` |
 | Cambiar la cadencia o el momento del latido | `corrida.mjs` decide cuando, `salida.mjs` como se ve |
 | Anadir un dato al resumen final | `git.mjs` si hay que calcularlo, `salida.mjs` como se ve, `vitral.mjs` los une |
+| Anadir un campo a un evento json, o un evento nuevo | `salida.mjs`, y esta tabla del catalogo. El evento sale de la funcion que ya pinta ese momento: si no hay funcion, primero hay un momento nuevo que pintar |
 
 Dos senales de que te equivocaste de modulo:
 

@@ -25,13 +25,28 @@ import {
 import { dentroDe, rutasDeclaradas } from './src/rutas.mjs';
 import * as salida from './src/salida.mjs';
 
+// --json se detecta antes del bucle de parsearBanderas, con un includes pelado.
+// Sin esto, `node vitral.mjs --bandera-mala --json` lanzaria el ErrorVitral de
+// bandera desconocida antes de haber leido --json, y la interfaz recibiria texto
+// pintado justo en el caso de error, que es el peor sitio donde puede pasar.
+// --seco se lee igual aqui porque el evento `fin` lo necesita abajo, en el .then
+// y en el .catch, donde ya no hay banderas parseadas a mano.
+//
+// Es un includes pelado: una tarea cuyo id fuera literalmente --json o --seco lo
+// confundiria. No se soporta y nunca tuvo sentido; no se le pone defensa.
+const modoJson = process.argv.includes('--json');
+const modoSeco = process.argv.includes('--seco');
+if (modoJson) salida.modoJson(true);
+
 function parsearBanderas(argv) {
   const banderas = { seco: false, solo: null, boceto: null, sinGit: false,
-                     rehacer: false, ayuda: false,
+                     rehacer: false, ayuda: false, json: false,
                      historial: false, historialArg: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--seco') banderas.seco = true;
+    // Ya se leyo en el prescan de arriba; aqui solo evita que caiga en el else.
+    else if (arg === '--json') banderas.json = true;
     // --historial lleva argumento opcional: si lo siguiente es otra bandera, o
     // no hay nada, se pide la lista por defecto.
     else if (arg === '--historial') {
@@ -46,7 +61,7 @@ function parsearBanderas(argv) {
     else if (arg === '--ayuda' || arg === '-h' || arg === '--help') banderas.ayuda = true;
     else {
       throw new ErrorVitral(`no conozco la bandera "${arg}".`,
-        'banderas: --seco  --solo <id>  --rehacer  --boceto <archivo>  --sin-git');
+        'banderas: --seco  --solo <id>  --rehacer  --boceto <archivo>  --sin-git  --json');
     }
   }
   if (banderas.solo === undefined) throw new ErrorVitral('--solo necesita un id de tarea.');
@@ -114,12 +129,11 @@ function registroDeCorrida(
   };
 }
 
-// Imprime lo que dijeron las comprobaciones y responde si alguna impide lanzar.
+// Saca lo que dijeron las comprobaciones y responde si alguna impide lanzar. Como
+// se dice —por que canal, con que sangria, o como evento— lo decide salida.mjs,
+// que es donde vive esa decision.
 function resolver(veredictos) {
-  for (const veredicto of veredictos) {
-    if (veredicto.nivel === 'aborta') salida.imprimirError(veredicto.mensaje, veredicto.sugerencia);
-    else salida.imprimirAviso(veredicto.mensaje);
-  }
+  for (const veredicto of veredictos) salida.veredicto(veredicto);
   return veredictos.some((veredicto) => veredicto.nivel === 'aborta');
 }
 
@@ -228,13 +242,20 @@ async function principal() {
   return 0;
 }
 
+// Exactamente un `fin` cierra toda invocacion: la que termina bien, la que aborta
+// por un guardarrail, la de --ayuda y la que revienta. Quien lee el flujo no
+// tiene que deducir el final de la muerte del proceso.
 principal()
-  .then((codigo) => { if (codigo !== 0) process.exit(codigo); })
+  .then((codigo) => {
+    salida.fin({ ok: codigo === 0, codigo, seco: modoSeco });
+    if (codigo !== 0) process.exit(codigo);
+  })
   .catch((error) => {
     if (error instanceof ErrorVitral) {
       salida.imprimirError(error.message, error.sugerencia);
     } else {
       salida.imprimirError(error.message, error.stack ? error.stack.split('\n')[1].trim() : null);
     }
+    salida.fin({ ok: false, codigo: 1, seco: modoSeco });
     process.exit(1);
   });

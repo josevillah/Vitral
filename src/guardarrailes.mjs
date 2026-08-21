@@ -6,10 +6,16 @@
 // grafica cuando exista.
 //
 // Un veredicto es:
-//   { nivel: 'aborta' | 'avisa', mensaje, sugerencia }
+//   { nivel: 'aborta' | 'avisa', mensaje, sugerencia, detalles }
 //
 // 'aborta' significa "no se puede lanzar esto". 'avisa' significa "se puede, pero
 // que conste". Una lista vacia significa que no hay nada que decir.
+//
+// Ni el mensaje, ni la sugerencia, ni ningun elemento de detalles llevan espacios
+// de sangria: la maquetacion es de salida.mjs, que es quien sabe cuanto mide el
+// prefijo que va a escribir delante. Los saltos de linea que quedan aqui son
+// deliberados. 'detalles' es siempre un array —la lista de cosas que antes se
+// aplanaba en prosa dentro del mensaje—, vacio cuando no hay lista.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,8 +29,9 @@ import { dentroDe, normalizarRuta, rutasDeclaradas, seSolapan } from './rutas.mj
 // turnos y un solo turno de opus ya cuesta cerca de esa cifra.
 const PISO_PRESUPUESTO = 0.25;
 
-const aborta = (mensaje, sugerencia) => ({ nivel: 'aborta', mensaje, sugerencia });
-const avisa = (mensaje) => ({ nivel: 'avisa', mensaje, sugerencia: null });
+const aborta = (mensaje, sugerencia, detalles = []) =>
+  ({ nivel: 'aborta', mensaje, sugerencia, detalles });
+const avisa = (mensaje) => ({ nivel: 'avisa', mensaje, sugerencia: null, detalles: [] });
 
 // Los agentes escriben archivos sin pedir permiso. Sin git no hay forma de saber
 // donde estamos ni de deshacerlo.
@@ -33,14 +40,14 @@ export function revisarRama({ repo, rama, banderas, rutaBoceto }) {
     if (!repo) {
       if (!banderas.sinGit) {
         return [aborta('esto no es un repositorio git, asi que no puedo saber en que rama estas.',
-          'los agentes van a escribir archivos sin pedir permiso y no habria como deshacerlo.\n        ' +
+          'los agentes van a escribir archivos sin pedir permiso y no habria como deshacerlo.\n' +
           'corre `git init` y crea una rama de trabajo, o pasa --sin-git si sabes lo que haces')];
       }
       return [avisa('corriendo con --sin-git: no hay repositorio, no hay red de seguridad, no hay vuelta atras')];
     }
     if (rama === 'main' || rama === 'master') {
       return [aborta(`estas en la rama "${rama}".`,
-        'los agentes escriben archivos sin pedir permiso y no quieres eso en tu rama principal.\n        ' +
+        'los agentes escriben archivos sin pedir permiso y no quieres eso en tu rama principal.\n' +
         `crea una rama antes: git checkout -b trabajo/${path.basename(rutaBoceto, '.json')}`)];
     }
     return [];
@@ -78,7 +85,7 @@ export function revisarBoceto({ rutaBoceto, raiz }) {
   // La ruta se muestra tal como la escribio la persona, sin normalizar, que es
   // como la va a reconocer.
   return [aborta(`el boceto "${rutaBoceto}" cae fuera del repositorio.`,
-    'sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.\n        ' +
+    'sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.\n' +
     'corre vitral desde el proyecto al que pertenece el boceto')];
 }
 
@@ -111,10 +118,12 @@ export function revisarSolapamientos(olas, raiz) {
 
   if (choques.length === 0) return [];
 
-  return [aborta('hay tareas de la misma ola escribiendo en el mismo terreno:' +
-    choques.map((choque) => `\n        ${choque}`).join(''),
+  // Los choques son una lista de cosas, no un parrafo: van en detalles, uno por
+  // elemento, y quien pinta decide como se ven.
+  return [aborta('hay tareas de la misma ola escribiendo en el mismo terreno:',
     'corren en paralelo, asi que el ultimo en guardar borra el trabajo del otro\n' +
-    '        sin avisar. Separa las rutas, o manda una de las dos a otra ola con "necesita".')];
+    'sin avisar. Separa las rutas, o manda una de las dos a otra ola con "necesita".',
+    choques)];
 }
 
 // El tope se comprueba entre turnos, asi que se rebasa por lo que cueste el turno
@@ -129,7 +138,7 @@ export function revisarPresupuestos(ejecutan) {
     veredictos.push(avisa(
       `${sinTope.map((t) => `"${t.id}"`).join(', ')} declara presupuesto, pero el ` +
       `agente "${sinTope[0].agente}" no tiene tope de gasto: se ignora.\n` +
-      `       Su unico freno es el timeout (${sinTope[0].timeout || TIMEOUT_MINUTOS} min).`));
+      `Su unico freno es el timeout (${sinTope[0].timeout || TIMEOUT_MINUTOS} min).`));
   }
 
   const apretadas = ejecutan.filter((t) =>
@@ -139,7 +148,7 @@ export function revisarPresupuestos(ejecutan) {
       `presupuesto por debajo de $${PISO_PRESUPUESTO} en ` +
       `${apretadas.map((t) => `"${t.id}" ($${t.presupuesto})`).join(', ')}: ` +
       'el tope se comprueba entre turnos, no durante,\n' +
-      '       asi que el gasto real puede ser varias veces el declarado. ' +
+      'asi que el gasto real puede ser varias veces el declarado. ' +
       'Sirve de techo de seguridad, no de control fino.'));
   }
 
@@ -167,9 +176,9 @@ export function revisarSobrescritura({ ejecutan, raiz, repo, banderas, handoffs,
   const quien = banderas.rehacer ? '--rehacer va a relanzar' : 'esta corrida va a relanzar';
   const cola = pisadas.length === 1
     ? 'que ya corrio antes y tiene archivos suyos en el arbol de trabajo.\n' +
-      '       El agente va a escribir encima de ellos.'
+      'El agente va a escribir encima de ellos.'
     : 'que ya corrieron antes y tienen archivos suyos en el arbol de trabajo.\n' +
-      '       Los agentes van a escribir encima de ellos.';
+      'Los agentes van a escribir encima de ellos.';
 
   return [avisa(`${quien} ${pisadas.map((t) => `"${t.id}"`).join(', ')}, ${cola} ` +
     'Conviene tener un commit antes.')];
@@ -185,16 +194,17 @@ export function revisarSobrescritura({ ejecutan, raiz, repo, banderas, handoffs,
 // se juzga lo que necesita el disco y la raiz, que boceto.mjs no tiene.
 const FUERA_DE_RAIZ =
   'ahi git no ve nada, asi que no hay forma de revisar ni de deshacer lo que\n' +
-  '        escriba el agente. Vitral no tiene otra red de seguridad.';
+  'escriba el agente. Vitral no tiene otra red de seguridad.';
 
 const NO_EXISTE =
   'creal antes de lanzar. Si no, el agente falla al arrancar con un ENOENT que\n' +
-  '        parece culpa del CLI y no del boceto.';
+  'parece culpa del CLI y no del boceto.';
 
 // Un veredicto por problema, no uno por tarea: si varias fallan por lo mismo se
-// nombran todas en el mismo mensaje, como en revisarSolapamientos.
-const listaCwd = (tareas) =>
-  tareas.map((tarea) => `\n        "${tarea.id}": ${tarea.cwd}`).join('');
+// nombran todas en el mismo veredicto, como en revisarSolapamientos. La lista va
+// en detalles, un elemento por tarea; con una sola tarea el nombre cabe en la
+// frase y detalles se queda vacio.
+const listaCwd = (tareas) => tareas.map((tarea) => `"${tarea.id}": ${tarea.cwd}`);
 
 export function revisarCwd(ejecutan, raiz) {
   const fuera = [];
@@ -226,7 +236,7 @@ export function revisarCwd(ejecutan, raiz) {
       `el cwd de "${fuera[0].id}" cae fuera del repositorio: ${fuera[0].cwd}`, FUERA_DE_RAIZ));
   } else if (fuera.length > 1) {
     veredictos.push(aborta(
-      'los cwd de estas tareas caen fuera del repositorio:' + listaCwd(fuera), FUERA_DE_RAIZ));
+      'los cwd de estas tareas caen fuera del repositorio:', FUERA_DE_RAIZ, listaCwd(fuera)));
   }
 
   if (inexistentes.length === 1) {
@@ -234,7 +244,7 @@ export function revisarCwd(ejecutan, raiz) {
       `el cwd de "${inexistentes[0].id}" no existe: ${inexistentes[0].cwd}`, NO_EXISTE));
   } else if (inexistentes.length > 1) {
     veredictos.push(aborta(
-      'los cwd de estas tareas no existen:' + listaCwd(inexistentes), NO_EXISTE));
+      'los cwd de estas tareas no existen:', NO_EXISTE, listaCwd(inexistentes)));
   }
 
   return veredictos;

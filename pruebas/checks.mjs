@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const raiz = path.resolve(aqui, '..');
@@ -94,12 +95,214 @@ const cuenta = (texto, patron) => (texto.match(patron) || []).length;
 // separados por lineas de "=" y cada uno lleva su cabecera, asi que se corta por
 // ahi: un check que mirara la salida entera veria tambien los prompts de las
 // otras tareas de la corrida, que en este asunto dicen justo lo contrario.
+const CIERRE_ENSAYO = 'modo seco: no se ejecuto nada.';
+
 function promptDe(texto, id) {
   const trozos = texto.split(/^={10,}\r?$/m);
   const indice = trozos.findIndex((trozo) =>
     trozo.includes('prompt · ola ') && trozo.includes(` · ${id} · agente `));
-  return indice === -1 ? null : trozos[indice + 1];
+  if (indice === -1) return null;
+  // Al ultimo prompt no lo cierra ningun "=====": su trozo llega hasta el final
+  // de la salida y se traga la linea con la que finEnsayo() cierra el ensayo,
+  // que es de la corrida y no de la tarea. Se corta ahi.
+  //
+  // Se corta por el texto literal a proposito. Si esa linea cambia, este check
+  // se pone rojo y alguien tiene que mirar: el texto de los mensajes del CLI es
+  // contrato con quien lo usa, igual que las banderas y los codigos de salida.
+  return trozos[indice + 1].split(CIERRE_ENSAYO)[0];
 }
+
+// Los canales por separado. La funcion de arriba los junta a proposito -a un
+// check del modo texto le da igual por donde salio un mensaje-, pero el modo
+// json contrata justo lo contrario: stdout lleva solo eventos y stderr queda
+// vacio, y eso no se puede comprobar sobre los dos pegados.
+function vitralCanales(cwd, ...args) {
+  const r = spawnSync(process.execPath, [path.join(raiz, 'vitral.mjs'), ...args],
+    { cwd, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } });
+  return { codigo: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+// El unico escenario que no cabe en el taller: pruebas/ vive dentro del
+// repositorio de Vitral, asi que un directorio de ahi dentro sigue siendo un
+// repositorio para `git rev-parse --is-inside-work-tree`. Los tres bloques de
+// "esto no es un repositorio" necesitan uno que de verdad no lo sea.
+const tallerFuera = path.join(os.tmpdir(), 'vitral-checks-sin-git');
+
+function montarSinRepo(nombre) {
+  const dir = path.join(tallerFuera, nombre);
+  mkdirSync(path.join(dir, '.vitral', 'plomo'), { recursive: true });
+  cpSync(path.join(raiz, 'ejemplo', 'boceto.json'), path.join(dir, '.vitral', 'boceto.json'));
+  cpSync(path.join(raiz, 'ejemplo', 'plomo'), path.join(dir, '.vitral', 'plomo'), { recursive: true });
+  return dir;
+}
+
+// Dos tareas de la misma ola sobre el mismo terreno. Sirve de freno: cuando hace
+// falta ver un aviso de una corrida que no lleva --seco, este boceto la aborta en
+// revisarSolapamientos, que juzga despues del aviso y antes de lanzar nada.
+const CHOQUE = { nombre: 'choque', tareas: [
+  { id: 'modelos', rutas: ['app/Models/'], prompt: 'x' },
+  { id: 'pedido', rutas: ['app/Models/Pedido/'], prompt: 'y' },
+] };
+
+// Los tres bloques de revisarSobrescritura son los unicos que ningun freno de
+// los de arriba alcanza: ese guardarrail se calla con --seco, y los que abortan
+// -rutas que chocan, cwd malo- se juzgan antes que el, asi que cuando hablan ya
+// no llega a hablar el aviso. El freno tiene que ir despues del aviso.
+//
+// Va `.vitral/logs` escrito como archivo: el mkdirSync de prepararRegistro
+// revienta con EEXIST justo despues de los avisos y justo antes de armar el
+// primer vidrio, asi que no se lanza ningun agente. El estropicio sale por
+// stderr y no lo mira nadie; el aviso ya salio entero por stdout.
+function montarSobrescritura(nombre, ids) {
+  const dir = montarRepo(nombre, 'trabajo/checks');
+  const boceto = bocetoSuelto(dir, 'sobrescritura.json', { nombre: 'sobrescritura',
+    tareas: ids.map((id) => ({ id, rutas: [`app/${id}/`], prompt: 'x' })) });
+  mkdirSync(path.join(dir, '.vitral', 'handoffs'), { recursive: true });
+  for (const id of ids) {
+    // Las dos mitades que busca el guardarrail: el handoff dice que la tarea ya
+    // corrio, y el archivo sin rastrear dice que dejo cosas suyas por delante.
+    // Sin sello de tanda, que es el caso en el que los handoffs valen.
+    writeFileSync(path.join(dir, '.vitral', 'handoffs', `${id}.md`), `${HANDOFF_VIEJO}\n`);
+    mkdirSync(path.join(dir, 'app', id), { recursive: true });
+    writeFileSync(path.join(dir, 'app', id, 'suyo.txt'), `${RASTRO_VIEJO}\n`);
+  }
+  writeFileSync(path.join(dir, '.vitral', 'logs'), 'el freno');
+  return { dir, boceto };
+}
+
+// ---------------------------------------------------------------------------
+// Los bloques literales
+// ---------------------------------------------------------------------------
+//
+// La salida de ayer, copiada caracter a caracter de .vitral/plomo/eventos.md,
+// donde se genero llamando al motor antes de que la tanda del modo json tocara
+// nada. No se regeneran corriendo el motor, ni para comprobarlos: el motor de
+// hoy ya lleva los cambios, asi que fotografiarlo congelaria como correcta
+// cualquier coma que se hubiera movido. Una red generada a partir de lo que
+// vigila no comprueba nada: confirma.
+//
+// Estan los diecisiete. Los tres de revisarSobrescritura son los unicos que no
+// se pueden disparar con --seco -ese guardarrail se calla en seco- ni con un
+// choque de rutas, que se juzga antes; salen con el freno de montarSobrescritura.
+const BLOQUES = {
+  "revisarRama · no es repositorio, sin --sin-git":
+    "vitral: esto no es un repositorio git, asi que no puedo saber en que rama estas.\n" +
+    "        los agentes van a escribir archivos sin pedir permiso y no habria como deshacerlo.\n" +
+    "        corre `git init` y crea una rama de trabajo, o pasa --sin-git si sabes lo que haces",
+  "revisarRama · no es repositorio, con --sin-git":
+    "aviso: corriendo con --sin-git: no hay repositorio, no hay red de seguridad, no hay vuelta atras",
+  "revisarRama · en main":
+    "vitral: estas en la rama \"main\".\n" +
+    "        los agentes escriben archivos sin pedir permiso y no quieres eso en tu rama principal.\n" +
+    "        crea una rama antes: git checkout -b trabajo/boceto",
+  "revisarRama · en main, con --seco":
+    "aviso: estas en la rama \"main\"; sin --seco esto abortaria",
+  "revisarRama · no es repositorio, con --seco":
+    "aviso: esto no es un repositorio git; sin --seco esto abortaria, o exigiria --sin-git",
+  "revisarBoceto · fuera del repositorio":
+    "vitral: el boceto \"C:/otro/.vitral/boceto.json\" cae fuera del repositorio.\n" +
+    "        sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.\n" +
+    "        corre vitral desde el proyecto al que pertenece el boceto",
+  "revisarSolapamientos · un choque":
+    "vitral: hay tareas de la misma ola escribiendo en el mismo terreno:\n" +
+    "        ola 1: \"modelos\" con app/Models/ y \"pedido\" con app/Models/Pedido/, ambas bajo app/Models\n" +
+    "        corren en paralelo, asi que el ultimo en guardar borra el trabajo del otro\n" +
+    "        sin avisar. Separa las rutas, o manda una de las dos a otra ola con \"necesita\".",
+  "revisarSolapamientos · dos choques":
+    "vitral: hay tareas de la misma ola escribiendo en el mismo terreno:\n" +
+    "        ola 1: \"modelos\" con app/Models/ y \"pedido\" con app/Models/Pedido/, ambas bajo app/Models\n" +
+    "        ola 1: \"modelos\" con app/Otro/ y \"pedido\" con app/Otro/Cosa/, ambas bajo app/Otro\n" +
+    "        corren en paralelo, asi que el ultimo en guardar borra el trabajo del otro\n" +
+    "        sin avisar. Separa las rutas, o manda una de las dos a otra ola con \"necesita\".",
+  "revisarPresupuestos · presupuesto en tarea opencode":
+    "aviso: \"suelta\" declara presupuesto, pero el agente \"opencode\" no tiene tope de gasto: se ignora.\n" +
+    "       Su unico freno es el timeout (15 min).",
+  "revisarPresupuestos · presupuesto por debajo del piso":
+    "aviso: presupuesto por debajo de $0.25 en \"tacano\" ($0.1): el tope se comprueba entre turnos, no durante,\n" +
+    "       asi que el gasto real puede ser varias veces el declarado. Sirve de techo de seguridad, no de control fino.",
+  "revisarCwd · un cwd fuera de la raiz":
+    "vitral: el cwd de \"fuera\" cae fuera del repositorio: ../otro\n" +
+    "        ahi git no ve nada, asi que no hay forma de revisar ni de deshacer lo que\n" +
+    "        escriba el agente. Vitral no tiene otra red de seguridad.",
+  "revisarCwd · dos cwd fuera de la raiz":
+    "vitral: los cwd de estas tareas caen fuera del repositorio:\n" +
+    "        \"fuera\": ../otro\n" +
+    "        \"lejos\": ../../mas\n" +
+    "        ahi git no ve nada, asi que no hay forma de revisar ni de deshacer lo que\n" +
+    "        escriba el agente. Vitral no tiene otra red de seguridad.",
+  "revisarCwd · un cwd que no existe":
+    "vitral: el cwd de \"perdida\" no existe: no-existe\n" +
+    "        creal antes de lanzar. Si no, el agente falla al arrancar con un ENOENT que\n" +
+    "        parece culpa del CLI y no del boceto.",
+  "revisarCwd · dos cwd que no existen":
+    "vitral: los cwd de estas tareas no existen:\n" +
+    "        \"perdida\": no-existe\n" +
+    "        \"otra\": tampoco\n" +
+    "        creal antes de lanzar. Si no, el agente falla al arrancar con un ENOENT que\n" +
+    "        parece culpa del CLI y no del boceto.",
+  "revisarSobrescritura · una tarea":
+    "aviso: esta corrida va a relanzar \"backend\", que ya corrio antes y tiene archivos suyos en el arbol de trabajo.\n" +
+    "       El agente va a escribir encima de ellos. Conviene tener un commit antes.",
+  "revisarSobrescritura · dos tareas":
+    "aviso: esta corrida va a relanzar \"backend\", \"frontend\", que ya corrieron antes y tienen archivos suyos en el arbol de trabajo.\n" +
+    "       Los agentes van a escribir encima de ellos. Conviene tener un commit antes.",
+  "revisarSobrescritura · una tarea, con --rehacer":
+    "aviso: --rehacer va a relanzar \"backend\", que ya corrio antes y tiene archivos suyos en el arbol de trabajo.\n" +
+    "       El agente va a escribir encima de ellos. Conviene tener un commit antes.",
+};
+
+// El bloque de un mensaje tal como sale por pantalla: la linea del prefijo y las
+// de continuacion, que van sangradas hasta donde mide ese prefijo ("vitral: "
+// mide 8, "aviso: " mide 7). Se recorta asi y no se compara la salida entera
+// porque un aviso sale despues de la cabecera, y la cabecera no es lo que fija
+// este check.
+function bloqueDe(texto, prefijo) {
+  const lineas = texto.replace(/\r\n/g, '\n').split('\n');
+  const desde = lineas.findIndex((linea) => linea.startsWith(prefijo));
+  if (desde === -1) return null;
+  const sangria = ' '.repeat(prefijo.length);
+  let hasta = desde + 1;
+  while (hasta < lineas.length && lineas[hasta].startsWith(sangria)) hasta++;
+  return lineas.slice(desde, hasta).join('\n');
+}
+
+// La primera linea en que dos bloques se separan. Un diff de cinco lineas no se
+// lee en la tabla de resultados; una linea con las dos versiones, si.
+function primeraDiferencia(esperado, real) {
+  const a = esperado.split('\n');
+  const b = real.split('\n');
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] !== b[i]) {
+      return `linea ${i + 1}: esperaba ${JSON.stringify(a[i] ?? null)}, ` +
+             `salio ${JSON.stringify(b[i] ?? null)}`;
+    }
+  }
+  return null;
+}
+
+// El bloque entero, no un includes de un trozo: lo que se vigila aqui es la
+// coma, el espacio y el salto de linea, y un includes no los ve.
+function comprobarBloque(texto, titulo, esperado = BLOQUES[titulo]) {
+  const real = bloqueDe(texto, esperado.slice(0, esperado.indexOf(' ') + 1));
+  if (real === null) return `(${titulo}) no salio ningun bloque`;
+  const diferencia = primeraDiferencia(esperado, real);
+  return diferencia === null ? null : `(${titulo}) ${diferencia}`;
+}
+
+// Las lineas de stdout ya parseadas, una por evento. Un evento no se compara
+// como cadena: `t` cambia en cada corrida.
+function eventos(stdout) {
+  return stdout.replace(/\r\n/g, '\n').split('\n').filter((linea) => linea !== '')
+    .map((linea, indice) => {
+      try {
+        return JSON.parse(linea);
+      } catch {
+        throw new Error(`la linea ${indice + 1} de stdout no es JSON: ${linea.slice(0, 60)}`);
+      }
+    });
+}
+
+const nombresDe = (evs) => evs.map((evento) => evento.evt).join(',');
 
 // ---------------------------------------------------------------------------
 // Los checks
@@ -499,6 +702,449 @@ const checks = [
     return promptDe(sinSello.texto, 'base') === null ? null
       : '(sin sello) la dio por saltada y aun asi armo su prompt';
   }],
+
+  // Los diecisiete bloques del plomo son la red fina del modo texto: los 24 de
+  // arriba vigilan que el motor siga diciendo lo mismo, y estos que lo diga con
+  // las mismas comas. Cada uno dispara su bloque desde un escenario y lo compara
+  // entero. Ninguno lanza agentes: todos abortan antes, o van con --seco.
+
+  ['los cinco bloques de revisarRama salen palabra por palabra', () => {
+    // a) en main y sin --seco: aborta antes de leer nada. Va sin --boceto porque
+    // la sugerencia nombra el boceto por defecto.
+    const enMain = vitralCanales(principal);
+    if (enMain.codigo !== 1) return `(en main) esperaba codigo 1, salio ${enMain.codigo}`;
+    let queja = comprobarBloque(enMain.stderr, 'revisarRama · en main');
+    if (queja) return queja;
+
+    // b) en main con --seco: avisa y sigue. El boceto que se pisa la detiene
+    // despues, que es lo que deja el aviso solo en stdout.
+    const choque = bocetoSuelto(principal, 'choque-rama.json', CHOQUE);
+    const seco = vitralCanales(principal, '--seco', '--boceto', choque);
+    queja = comprobarBloque(seco.stdout, 'revisarRama · en main, con --seco');
+    if (queja) return queja;
+
+    // c, d, e) los tres de "esto no es un repositorio", en un directorio que de
+    // verdad no lo es.
+    const fuera = montarSinRepo('rama');
+    const suelto = vitralCanales(fuera);
+    if (suelto.codigo !== 1) return `(sin repo) esperaba codigo 1, salio ${suelto.codigo}`;
+    queja = comprobarBloque(suelto.stderr, 'revisarRama · no es repositorio, sin --sin-git');
+    if (queja) return queja;
+
+    const choqueFuera = bocetoSuelto(fuera, 'choque.json', CHOQUE);
+    const sinGit = vitralCanales(fuera, '--sin-git', '--boceto', choqueFuera);
+    queja = comprobarBloque(sinGit.stdout, 'revisarRama · no es repositorio, con --sin-git');
+    if (queja) return queja;
+
+    const secoFuera = vitralCanales(fuera, '--seco', '--boceto', choqueFuera);
+    return comprobarBloque(secoFuera.stdout, 'revisarRama · no es repositorio, con --seco');
+  }],
+
+  ['el bloque de revisarBoceto sale palabra por palabra', () => {
+    // El bloque del plomo lleva una ruta absoluta de Windows que no se puede
+    // reproducir en cualquier maquina. Se sustituye la ruta y solo la ruta: lo
+    // que la rodea se compara letra por letra. La ruta sale en el mensaje tal
+    // como se escribio, sin normalizar.
+    const ruta = '../otro/.vitral/boceto.json';
+    const esperado = BLOQUES['revisarBoceto · fuera del repositorio']
+      .replace('C:/otro/.vitral/boceto.json', ruta);
+    const { codigo, stderr } = vitralCanales(trabajo, '--seco', '--boceto', ruta);
+    if (codigo !== 1) return `esperaba codigo 1, salio ${codigo}`;
+    return comprobarBloque(stderr, 'revisarBoceto · fuera del repositorio', esperado);
+  }],
+
+  ['los dos bloques de revisarSolapamientos salen palabra por palabra', () => {
+    const uno = bocetoSuelto(trabajo, 'choque-uno.json', CHOQUE);
+    const primero = vitralCanales(trabajo, '--seco', '--boceto', uno);
+    if (primero.codigo !== 1) return `(un choque) esperaba codigo 1, salio ${primero.codigo}`;
+    const queja = comprobarBloque(primero.stderr, 'revisarSolapamientos · un choque');
+    if (queja) return queja;
+
+    const dos = bocetoSuelto(trabajo, 'choque-dos.json', { nombre: 'choque', tareas: [
+      { id: 'modelos', rutas: ['app/Models/', 'app/Otro/'], prompt: 'x' },
+      { id: 'pedido', rutas: ['app/Models/Pedido/', 'app/Otro/Cosa/'], prompt: 'y' },
+    ] });
+    const segundo = vitralCanales(trabajo, '--seco', '--boceto', dos);
+    if (segundo.codigo !== 1) return `(dos choques) esperaba codigo 1, salio ${segundo.codigo}`;
+    return comprobarBloque(segundo.stderr, 'revisarSolapamientos · dos choques');
+  }],
+
+  ['los dos bloques de revisarPresupuestos salen palabra por palabra', () => {
+    const suelta = bocetoSuelto(trabajo, 'suelta.json', { nombre: 'suelta', tareas: [
+      { id: 'suelta', agente: 'opencode', rutas: ['app/'], presupuesto: 3, prompt: 'x' },
+    ] });
+    const sinTope = vitralCanales(trabajo, '--seco', '--boceto', suelta);
+    const queja = comprobarBloque(sinTope.stdout,
+      'revisarPresupuestos · presupuesto en tarea opencode');
+    if (queja) return queja;
+
+    const tacano = bocetoSuelto(trabajo, 'tacano.json', { nombre: 'tacano', tareas: [
+      { id: 'tacano', rutas: ['app/Models/'], presupuesto: 0.1, prompt: 'x' },
+    ] });
+    const apretado = vitralCanales(trabajo, '--seco', '--boceto', tacano);
+    return comprobarBloque(apretado.stdout,
+      'revisarPresupuestos · presupuesto por debajo del piso');
+  }],
+
+  ['los cuatro bloques de revisarCwd salen palabra por palabra', () => {
+    // El singular y el plural son redacciones distintas, no maquetacion: los dos
+    // se fijan. Con una sola tarea el nombre cabe en la frase; con varias, la
+    // lista baja a detalles.
+    const casos = [
+      ['cwd-fuera-uno.json', 'revisarCwd · un cwd fuera de la raiz',
+        [{ id: 'fuera', rutas: ['a/'], cwd: '../otro', prompt: 'x' }]],
+      ['cwd-fuera-dos.json', 'revisarCwd · dos cwd fuera de la raiz',
+        [{ id: 'fuera', rutas: ['a/'], cwd: '../otro', prompt: 'x' },
+         { id: 'lejos', rutas: ['b/'], cwd: '../../mas', prompt: 'y' }]],
+      ['cwd-falta-uno.json', 'revisarCwd · un cwd que no existe',
+        [{ id: 'perdida', rutas: ['a/'], cwd: 'no-existe', prompt: 'x' }]],
+      ['cwd-falta-dos.json', 'revisarCwd · dos cwd que no existen',
+        [{ id: 'perdida', rutas: ['a/'], cwd: 'no-existe', prompt: 'x' },
+         { id: 'otra', rutas: ['b/'], cwd: 'tampoco', prompt: 'y' }]],
+    ];
+    for (const [archivo, titulo, tareas] of casos) {
+      const boceto = bocetoSuelto(trabajo, archivo, { nombre: 'cwd', tareas });
+      const { codigo, stderr } = vitralCanales(trabajo, '--seco', '--boceto', boceto);
+      if (codigo !== 1) return `(${titulo}) esperaba codigo 1, salio ${codigo}`;
+      const queja = comprobarBloque(stderr, titulo);
+      if (queja) return queja;
+    }
+    return null;
+  }],
+
+  ['los tres bloques de revisarSobrescritura salen palabra por palabra', () => {
+    const una = montarSobrescritura('sobre-una', ['backend']);
+    const primera = vitralCanales(una.dir, '--boceto', una.boceto);
+    let queja = comprobarBloque(primera.stdout, 'revisarSobrescritura · una tarea');
+    if (queja) return queja;
+
+    // Que el freno haya saltado no es un detalle del escenario: es lo unico que
+    // separa a este check de lanzar agentes de verdad. Si prepararRegistro deja
+    // de reventar aqui, esto tiene que ponerse rojo y no gastar un centimo.
+    if (!primera.stderr.includes('EEXIST')) {
+      return 'el freno no salto: la corrida siguio y pudo llegar a lanzar agentes de verdad';
+    }
+
+    const rehacer = vitralCanales(una.dir, '--rehacer', '--boceto', una.boceto);
+    queja = comprobarBloque(rehacer.stdout, 'revisarSobrescritura · una tarea, con --rehacer');
+    if (queja) return queja;
+
+    const dos = montarSobrescritura('sobre-dos', ['backend', 'frontend']);
+    const segunda = vitralCanales(dos.dir, '--boceto', dos.boceto);
+    return comprobarBloque(segunda.stdout, 'revisarSobrescritura · dos tareas');
+  }],
+
+  // ---------------------------------------------------------------------------
+  // El modo json
+  // ---------------------------------------------------------------------------
+  //
+  // Se parsea el JSON y se comparan campos, nunca lineas enteras: `t` cambia en
+  // cada corrida. Ninguno lanza agentes: todos son consultas, abortos o --seco.
+
+  ['--json emite JSONL por stdout y deja stderr vacio', () => {
+    // Las cinco maneras de terminar, no solo la que sale bien: los caminos de
+    // error son justo donde se cuela una linea que no es un evento, porque en
+    // modo texto ahi se escribe por otro canal y con otra funcion.
+    const choque = bocetoSuelto(trabajo, 'choque-jsonl.json', CHOQUE);
+    const corridas = [
+      ['bien', 0, ['--seco', '--json']],
+      ['guardarrail', 1, ['--seco', '--json', '--boceto', choque]],
+      ['bandera mala', 1, ['--json', '--bandera-mala']],
+      ['ayuda', 0, ['--json', '--ayuda']],
+      ['historial', 0, ['--json', '--historial']],
+    ];
+    for (const [como, esperado, args] of corridas) {
+      const { codigo, stdout, stderr } = vitralCanales(trabajo, ...args);
+      if (codigo !== esperado) return `(${como}) esperaba codigo ${esperado}, salio ${codigo}`;
+      // stderr es la catastrofe, y en una corrida prevista queda vacio: tambien
+      // en las que terminan mal, que es lo que mueve de canal la bandera.
+      if (stderr !== '') return `(${como}) stderr tendria que quedar vacio: ${stderr.slice(0, 60)}`;
+      if (!stdout.endsWith('\n')) return `(${como}) la ultima linea no termina en salto de linea`;
+      const lineas = stdout.replace(/\r\n/g, '\n').split('\n');
+      lineas.pop();
+      if (lineas.length === 0) return `(${como}) no salio ninguna linea`;
+      for (const [indice, linea] of lineas.entries()) {
+        if (linea === '') return `(${como}) la linea ${indice + 1} esta vacia: una linea, un evento`;
+        try {
+          JSON.parse(linea);
+        } catch (error) {
+          return `(${como}) la linea ${indice + 1} no parsea sola: ${error.message}`;
+        }
+      }
+    }
+    return null;
+  }],
+
+  ['todo evento lleva evt y t delante, y un unico fin lo cierra', () => {
+    // Cuatro invocaciones que terminan de cuatro maneras: bien, por guardarrail,
+    // por ErrorVitral y por consulta. Las cuatro cierran igual.
+    const choque = bocetoSuelto(trabajo, 'choque-flujo.json', CHOQUE);
+    const corridas = [
+      ['seco', ['--seco', '--json']],
+      ['guardarrail', ['--seco', '--json', '--boceto', choque]],
+      ['bandera mala', ['--json', '--bandera-mala']],
+      ['ayuda', ['--json', '--ayuda']],
+    ];
+    for (const [como, args] of corridas) {
+      const evs = eventos(vitralCanales(trabajo, ...args).stdout);
+      if (evs.length === 0) return `(${como}) no salio ningun evento`;
+      for (const [indice, evento] of evs.entries()) {
+        const campos = Object.keys(evento);
+        if (campos[0] !== 'evt' || campos[1] !== 't') {
+          return `(${como}) el evento ${indice + 1} empieza por ${campos.slice(0, 2).join(', ')}`;
+        }
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(evento.t)) {
+          return `(${como}) el evento ${indice + 1} lleva una t rara: ${evento.t}`;
+        }
+      }
+      const fines = evs.filter((evento) => evento.evt === 'fin').length;
+      if (fines !== 1) return `(${como}) esperaba exactamente un fin, salieron ${fines}`;
+      if (evs[evs.length - 1].evt !== 'fin') {
+        return `(${como}) el ultimo evento es ${evs[evs.length - 1].evt} y no fin`;
+      }
+    }
+    return null;
+  }],
+
+  ['el evento corrida lleva el catalogo entero, con ids en las olas', () => {
+    const { stdout } = vitralCanales(trabajo, '--seco', '--json');
+    const corridas = eventos(stdout).filter((evento) => evento.evt === 'corrida');
+    if (corridas.length !== 1) return `esperaba 1 evento corrida, salieron ${corridas.length}`;
+    const [corrida] = corridas;
+    const campos = 'evt,t,nombre,boceto,rama,plomo,olas,solo,otraTanda';
+    if (Object.keys(corrida).join(',') !== campos) {
+      return `los campos son ${Object.keys(corrida).join(',')} y el catalogo dice ${campos}`;
+    }
+    if (corrida.nombre !== 'Modulo de estados de pedido') return `el nombre salio "${corrida.nombre}"`;
+    // Barras hacia delante tambien en Windows: en el evento la ruta es un dato,
+    // no la ruta del sistema de quien corrio el motor.
+    if (corrida.boceto !== '.vitral/boceto.json') return `el boceto salio "${corrida.boceto}"`;
+    if (corrida.rama !== 'trabajo/checks') return `la rama salio ${JSON.stringify(corrida.rama)}`;
+    // Los nombres del plomo, no su cuenta; los bytes crudos, no "33.1 KB".
+    if (JSON.stringify(corrida.plomo.archivos) !== '["estados-pedido.md"]') {
+      return `el plomo dice ${JSON.stringify(corrida.plomo.archivos)}`;
+    }
+    if (typeof corrida.plomo.bytes !== 'number') return 'los bytes del plomo no son un numero';
+    // Los ids de cada ola, no las cuentas: de ahi sale el "2 -> 1" del texto.
+    if (JSON.stringify(corrida.olas) !== '[["backend","frontend"],["revision"]]') {
+      return `las olas salieron ${JSON.stringify(corrida.olas)}`;
+    }
+    // Un dato ausente es null, nunca un campo que falta.
+    if (corrida.solo !== null) return `solo salio ${JSON.stringify(corrida.solo)}`;
+    return corrida.otraTanda === null ? null
+      : `otraTanda salio ${JSON.stringify(corrida.otraTanda)}`;
+  }],
+
+  ['el evento prompt lleva el mismo prompt que pinta --seco', () => {
+    const flujo = vitralCanales(trabajo, '--seco', '--json');
+    const pintado = vitral(trabajo, '--seco');
+    const prompts = eventos(flujo.stdout).filter((evento) => evento.evt === 'prompt');
+    if (prompts.length !== 3) return `esperaba 3 eventos prompt, salieron ${prompts.length}`;
+    const olas = { backend: 1, frontend: 1, revision: 2 };
+    for (const prompt of prompts) {
+      const campos = 'evt,t,ola,id,agente,bytes,texto';
+      if (Object.keys(prompt).join(',') !== campos) {
+        return `(${prompt.id}) los campos son ${Object.keys(prompt).join(',')}`;
+      }
+      // Base 1, como en pantalla: dos numeraciones para la misma cosa es la
+      // trampa de catalogo de siempre.
+      if (prompt.ola !== olas[prompt.id]) {
+        return `(${prompt.id}) esperaba ola ${olas[prompt.id]}, salio ${prompt.ola}`;
+      }
+      if (prompt.agente !== 'claude') return `(${prompt.id}) el agente salio "${prompt.agente}"`;
+      if (prompt.bytes !== Buffer.byteLength(prompt.texto, 'utf8')) {
+        return `(${prompt.id}) los bytes no son los del texto que viaja`;
+      }
+      const suyo = promptDe(pintado.texto, prompt.id);
+      if (suyo === null) return `(${prompt.id}) el modo texto no saco su prompt`;
+      if (suyo.trim() !== prompt.texto.trim()) {
+        return `(${prompt.id}) el prompt del evento no es el que pinta el modo texto`;
+      }
+    }
+    return null;
+  }],
+
+  ['--json --ayuda: un ayuda y un fin, y nada mas', () => {
+    const { codigo, stdout, stderr } = vitralCanales(trabajo, '--json', '--ayuda');
+    if (codigo !== 0) return `esperaba codigo 0, salio ${codigo}`;
+    if (stderr !== '') return `stderr tendria que quedar vacio y salio: ${stderr.slice(0, 60)}`;
+    const evs = eventos(stdout);
+    if (nombresDe(evs) !== 'ayuda,fin') return `salieron ${nombresDe(evs)}`;
+    // El texto entero de AYUDA, con sus saltos de linea, no un catalogo de banderas.
+    if (evs[0].texto.trim() !== vitral(trabajo, '--ayuda').texto.trim()) {
+      return 'el texto del evento no es el que pinta --ayuda';
+    }
+    const fin = evs[1];
+    if (fin.ok !== true || fin.codigo !== 0 || fin.seco !== false) {
+      return `el fin salio ${JSON.stringify({ ok: fin.ok, codigo: fin.codigo, seco: fin.seco })}`;
+    }
+    return null;
+  }],
+
+  ['--json con una bandera desconocida: el prescan la salva', () => {
+    // La bandera mala va delante a proposito: sin el prescan, parsearBanderas
+    // lanzaria el ErrorVitral antes de haber leido --json y la interfaz recibiria
+    // texto pintado justo en el caso de error, que es el peor sitio donde puede
+    // pasar.
+    const { codigo, stdout, stderr } = vitralCanales(trabajo, '--bandera-mala', '--json');
+    if (codigo !== 1) return `esperaba codigo 1, salio ${codigo}`;
+    if (stderr !== '') return `el error salio por stderr en vez de por stdout: ${stderr.slice(0, 60)}`;
+    const evs = eventos(stdout);
+    if (nombresDe(evs) !== 'error,fin') return `salieron ${nombresDe(evs)}`;
+    // detalles no viaja en un error: nada que llame a imprimirError fuera de un
+    // veredicto las produce.
+    if (Object.keys(evs[0]).join(',') !== 'evt,t,mensaje,sugerencia') {
+      return `los campos del error son ${Object.keys(evs[0]).join(',')}`;
+    }
+    if (evs[0].mensaje !== 'no conozco la bandera "--bandera-mala".') {
+      return `el mensaje salio ${JSON.stringify(evs[0].mensaje)}`;
+    }
+    if (!String(evs[0].sugerencia).includes('--json')) {
+      return 'la sugerencia no nombra --json entre las banderas';
+    }
+    return evs[1].codigo === 1 ? null : `el fin salio con codigo ${evs[1].codigo}`;
+  }],
+
+  ['--json y un boceto que no existe: error y fin', () => {
+    const { codigo, stdout, stderr } =
+      vitralCanales(trabajo, '--json', '--boceto', path.join('.vitral', 'no-esta.json'));
+    if (codigo !== 1) return `esperaba codigo 1, salio ${codigo}`;
+    if (stderr !== '') return `el error salio por stderr: ${stderr.slice(0, 60)}`;
+    const evs = eventos(stdout);
+    if (nombresDe(evs) !== 'error,fin') return `salieron ${nombresDe(evs)}`;
+    if (!evs[0].mensaje.includes('no encuentro el boceto')) {
+      return `el mensaje salio ${JSON.stringify(evs[0].mensaje)}`;
+    }
+    return evs[1].codigo === 1 ? null : `el fin salio con codigo ${evs[1].codigo}`;
+  }],
+
+  ['--json --historial: un solo evento con el array dentro', () => {
+    // Un repositorio recien montado: los otros escenarios ya tienen historial
+    // escrito por los checks de arriba.
+    const limpio = montarRepo('json-historial', 'trabajo/checks');
+
+    // a) vacio: un historial con corridas [], y ningun otro evento.
+    const vacio = vitralCanales(limpio, '--json', '--historial');
+    if (vacio.codigo !== 0) return `(vacio) esperaba codigo 0, salio ${vacio.codigo}`;
+    if (vacio.stderr !== '') return `(vacio) stderr no quedo vacio: ${vacio.stderr.slice(0, 60)}`;
+    const sinNada = eventos(vacio.stdout);
+    if (nombresDe(sinNada) !== 'historial,fin') return `(vacio) salieron ${nombresDe(sinNada)}`;
+    if (JSON.stringify(sinNada[0].corridas) !== '[]') {
+      return `(vacio) corridas salio ${JSON.stringify(sinNada[0].corridas)}`;
+    }
+
+    // b) con dos corridas: siguen siendo un solo evento, y llegan tal como salen
+    // de leerHistorial, sin tocar.
+    const guardadas = [
+      { id: '20260818-093322', nombre: 'Una vieja', ok: true, costo: 0.25, comoSea: 'intacto' },
+      { id: '20260819-143012', nombre: 'Una reciente', ok: false, costo: 0.6431 },
+    ];
+    writeFileSync(path.join(limpio, '.vitral', 'historial.jsonl'),
+      guardadas.map((c) => JSON.stringify(c)).join('\n') + '\n');
+    const lleno = eventos(vitralCanales(limpio, '--json', '--historial').stdout);
+    if (nombresDe(lleno) !== 'historial,fin') return `(lleno) salieron ${nombresDe(lleno)}`;
+    const corridas = lleno[0].corridas;
+    if (corridas.length !== 2) return `(lleno) esperaba 2 corridas, salieron ${corridas.length}`;
+    if (corridas[0].id !== '20260819-143012') {
+      return '(lleno) las corridas no salen de la mas reciente a la mas antigua';
+    }
+    if (corridas[1].comoSea !== 'intacto') return '(lleno) la corrida no llego tal cual estaba';
+
+    // c) un id que no existe: error y fin, codigo 1.
+    const perdida = vitralCanales(limpio, '--json', '--historial', 'no-existe');
+    if (perdida.codigo !== 1) return `(id inexistente) esperaba codigo 1, salio ${perdida.codigo}`;
+    const evs = eventos(perdida.stdout);
+    if (nombresDe(evs) !== 'error,fin') return `(id inexistente) salieron ${nombresDe(evs)}`;
+    return evs[1].codigo === 1 ? null
+      : `(id inexistente) el fin salio con codigo ${evs[1].codigo}`;
+  }],
+
+  ['--json y un guardarrail que aborta: veredicto sin maquetacion', () => {
+    const choque = bocetoSuelto(trabajo, 'choque-veredicto.json', CHOQUE);
+    const { codigo, stdout, stderr } =
+      vitralCanales(trabajo, '--seco', '--json', '--boceto', choque);
+    if (codigo !== 1) return `esperaba codigo 1, salio ${codigo}`;
+    if (stderr !== '') return `el veredicto salio por stderr: ${stderr.slice(0, 60)}`;
+    const evs = eventos(stdout);
+    // revisarSolapamientos juzga antes de la cabecera: no llega ningun `corrida`.
+    if (nombresDe(evs) !== 'veredicto,fin') return `salieron ${nombresDe(evs)}`;
+    const [veredicto] = evs;
+    const campos = 'evt,t,nivel,mensaje,sugerencia,detalles';
+    if (Object.keys(veredicto).join(',') !== campos) {
+      return `los campos son ${Object.keys(veredicto).join(',')} y el catalogo dice ${campos}`;
+    }
+    if (veredicto.nivel !== 'aborta') return `el nivel salio "${veredicto.nivel}"`;
+    if (veredicto.mensaje !== 'hay tareas de la misma ola escribiendo en el mismo terreno:') {
+      return `el mensaje salio ${JSON.stringify(veredicto.mensaje)}`;
+    }
+    // La lista va en detalles, uno por elemento, no aplanada en prosa dentro del
+    // mensaje ni pegada detras de sus dos puntos.
+    if (veredicto.detalles.length !== 1) {
+      return `esperaba 1 detalle, salieron ${veredicto.detalles.length}`;
+    }
+    const choqueEsperado = 'ola 1: "modelos" con app/Models/ y "pedido" con ' +
+      'app/Models/Pedido/, ambas bajo app/Models';
+    if (veredicto.detalles[0] !== choqueEsperado) {
+      return `el detalle salio ${JSON.stringify(veredicto.detalles[0])}`;
+    }
+    // Ni el mensaje, ni la sugerencia, ni ningun detalle llevan sangria de
+    // terminal: eso es maquetacion y la pone quien pinta.
+    const sinSangria = [['mensaje', veredicto.mensaje], ['sugerencia', veredicto.sugerencia],
+      ...veredicto.detalles.map((detalle, i) => [`detalles[${i}]`, detalle])];
+    for (const [campo, valor] of sinSangria) {
+      if (/(^|\n) /.test(String(valor))) return `${campo} lleva espacios de sangria dentro del dato`;
+    }
+    return evs[1].codigo === 1 ? null : `el fin salio con codigo ${evs[1].codigo}`;
+  }],
+
+  ['--json: el avisa y el aborta salen los dos por stdout', () => {
+    // En modo texto el aviso va por stdout y el error por stderr. Con --json los
+    // dos son eventos del mismo canal, y por eso la interfaz nunca tiene que
+    // olfatear si una linea es JSON o no.
+    const choque = bocetoSuelto(principal, 'choque-canales.json', CHOQUE);
+    const { codigo, stdout, stderr } =
+      vitralCanales(principal, '--seco', '--json', '--boceto', choque);
+    if (codigo !== 1) return `esperaba codigo 1, salio ${codigo}`;
+    if (stderr !== '') return `algo salio por stderr: ${stderr.slice(0, 60)}`;
+    const evs = eventos(stdout);
+    if (nombresDe(evs) !== 'veredicto,veredicto,fin') return `salieron ${nombresDe(evs)}`;
+    const [avisa, aborta] = evs;
+    if (avisa.nivel !== 'avisa') return `el primero salio con nivel "${avisa.nivel}"`;
+    if (avisa.mensaje !== 'estas en la rama "main"; sin --seco esto abortaria') {
+      return `el aviso dice ${JSON.stringify(avisa.mensaje)}`;
+    }
+    // Un avisa deja la sugerencia en null y los detalles en [], nunca sin campo:
+    // quien lee no tiene que distinguir "no vino" de "vino vacio".
+    if (avisa.sugerencia !== null) return `el avisa trae sugerencia ${JSON.stringify(avisa.sugerencia)}`;
+    if (JSON.stringify(avisa.detalles) !== '[]') {
+      return `el avisa trae detalles ${JSON.stringify(avisa.detalles)}`;
+    }
+    return aborta.nivel === 'aborta' ? null : `el segundo salio con nivel "${aborta.nivel}"`;
+  }],
+
+  ['los codigos de salida son identicos con y sin --json', () => {
+    // La bandera cambia como se dice lo que pasa, no lo que pasa.
+    const choque = bocetoSuelto(trabajo, 'choque-codigos.json', CHOQUE);
+    const casos = [
+      ['--seco'],
+      ['--ayuda'],
+      ['--historial'],
+      ['--historial', 'no-existe'],
+      ['--bandera-mala'],
+      ['--solo', 'fantasma'],
+      ['--seco', '--boceto', choque],
+      ['--seco', '--boceto', path.join('.vitral', 'no-esta.json')],
+    ];
+    for (const args of casos) {
+      const texto = vitralCanales(trabajo, ...args);
+      const flujo = vitralCanales(trabajo, ...args, '--json');
+      if (texto.codigo !== flujo.codigo) {
+        return `(${args.join(' ')}) sin --json salio ${texto.codigo} y con --json ${flujo.codigo}`;
+      }
+    }
+    return null;
+  }],
+
 ];
 
 // ---------------------------------------------------------------------------
@@ -508,6 +1154,7 @@ const checks = [
 function limpiar() {
   try {
     rmSync(taller, { recursive: true, force: true, maxRetries: 5 });
+    rmSync(tallerFuera, { recursive: true, force: true, maxRetries: 5 });
   } catch {
     // En Windows los objetos de git quedan de solo lectura y a veces no se
     // dejan borrar. No es motivo para fallar: el directorio esta ignorado.

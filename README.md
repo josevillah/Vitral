@@ -46,7 +46,42 @@ node vitral.mjs --solo <id>        corre una tarea y sus dependencias
 node vitral.mjs --solo <id> --rehacer   reejecuta tambien las dependencias
 node vitral.mjs --boceto <archivo> usa otro boceto
 node vitral.mjs --sin-git          corre sin repositorio git (peligroso)
+node vitral.mjs --json             emite eventos JSON en vez del texto de siempre
 ```
+
+### --json: la misma corrida, contada en eventos
+
+`--json` corre exactamente lo mismo y emite **un evento JSON por linea** en vez
+del texto pintado: arranque de cada tarea, latidos, cierres, resumen. Se combina
+con todas las demas banderas, y los codigos de salida son identicos con y sin
+ella. Es lo que va a leer la interfaz grafica; desde una terminal sirve para
+canalizar una corrida a `jq` o guardarla entera en un archivo.
+
+```
+node vitral.mjs --json > corrida.jsonl
+node vitral.mjs --json | jq -c 'select(.evt == "cierre")'
+```
+
+Dos cosas que conviene tener claras:
+
+- **`stdout` es JSONL puro.** Una linea, un evento, siempre parseable con un
+  `JSON.parse`. Nunca sale por ahi otra cosa. Los errores y los avisos, que sin
+  la bandera van a `stderr`, con `--json` tambien salen por `stdout`, como
+  eventos, para que solo haya un canal que leer.
+- **`stderr` queda para la catastrofe:** la traza de algo que vitral no supo
+  capturar. En una corrida normal queda vacio, y cualquier cosa que aparezca ahi
+  es inequivocamente un accidente.
+
+**`--json` no da streaming del trabajo del agente.** Es lo primero que se
+malinterpreta y no es lo que hace. Los eventos son los mismos momentos que el
+texto ya contaba —una tarea arranca, late cada 60 segundos, termina—, no lo que
+el agente va escribiendo: su salida sigue llegando entera cuando el proceso
+acaba. Ver a un vidrio trabajar en vivo es lo de los paneles con PTY, y viene
+despues.
+
+Sin la bandera **no cambia absolutamente nada**: el texto de siempre, en los
+canales de siempre. El catalogo completo de eventos y de campos, para quien vaya
+a consumirlos, esta en `.vitral/plomo/motor.md`.
 
 ### --solo no repite lo que ya esta hecho
 
@@ -299,7 +334,7 @@ ella resolveria las rutas de sus tareas contra esta raiz y escribiria aqui sus
 handoffs: contratos de un proyecto, repositorio de otro.
 
 ```
-el boceto "C:/otro/.vitral/boceto.json" cae fuera del repositorio.
+vitral: el boceto "C:/otro/.vitral/boceto.json" cae fuera del repositorio.
         sus rutas se resolverian contra esta raiz y sus handoffs se escribirian aqui.
         corre vitral desde el proyecto al que pertenece el boceto
 ```
@@ -402,10 +437,11 @@ Antes de dar por bueno un cambio en el motor:
 node pruebas/checks.mjs
 ```
 
-Veinticuatro comprobaciones, cero dependencias, sale con 0 o con 1. Cada una monta su
+Checks de regresion, cero dependencias, sale con 0 o con 1; el propio comando dice
+cuantos pasan de cuantos, asi que aqui no se repite el numero. Cada uno monta su
 propio repositorio temporal con el boceto de `ejemplo/` dentro, asi que el
 resultado no depende de en que rama estes ni de lo que quedara de una corrida
-anterior. Ninguna lanza agentes de verdad.
+anterior. Ninguno lanza agentes de verdad.
 
 El contrato completo esta en **`.vitral/plomo/motor.md`**: que exporta cada
 modulo, con que firma, y que no le corresponde. Ese archivo es el plomo del
@@ -417,7 +453,7 @@ Tres invariantes que no se rompen sin acuerdo previo:
    `process.stdout`. Cuando haya interfaz grafica, portar la salida sera tocar un
    archivo en vez de diez.
 2. **Solo `vitral.mjs` llama a `process.exit`.** Los guardarrailes devuelven
-   veredictos (`{ nivel: 'aborta' | 'avisa', mensaje, sugerencia }`) y los errores
+   veredictos (`{ nivel: 'aborta' | 'avisa', mensaje, sugerencia, detalles }`) y los errores
    de forma lanzan `ErrorVitral`. Asi se puede preguntar "¿esto es seguro?" sin
    morirse en el intento.
 3. **Las dependencias van en una direccion.** Sin ciclos.
@@ -475,8 +511,9 @@ unico que los mantiene alineados es el plomo. Si el plomo es vago, no encajan.
 
 **Sin streaming del trabajo.** No se ve al agente trabajar: su salida llega
 entera cuando el proceso termina. Lo unico que hay mientras tanto es una linea de
-latido por minuto y por tarea en curso, para saber que sigue viva. Los paneles en
-vivo son justo lo que viene despues de esta version.
+latido por minuto y por tarea en curso, para saber que sigue viva. **`--json` no
+cambia esto**: emite los mismos momentos, no el teclear del agente. Los paneles
+en vivo son justo lo que viene despues de esta version.
 
 ## Lo que esta medido, no supuesto
 

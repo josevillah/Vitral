@@ -451,6 +451,13 @@ vitral: los cwd de estas tareas no existen:
         parece culpa del CLI y no del boceto.
 ```
 
+Estos bloques se generaron llamando al motor **antes** de que esta tanda tocara
+nada. Son la fotografia de la salida de ayer y por eso valen como red. **Quien
+necesite el texto esperado lo copia de aqui, caracter a caracter. Esta prohibido
+obtenerlo ejecutando el motor**: para cuando alguien lo ejecute, el motor ya esta
+cambiado, y una red generada a partir de lo que vigila no comprueba nada
+—confirma.
+
 ---
 
 ## `src/salida.mjs`: la API

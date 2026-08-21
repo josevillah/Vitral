@@ -769,6 +769,39 @@ no `src/`. La comparacion de solapamiento es por segmento de ruta, asi que
 las dos. Declarar una carpeta le da al agente permiso para escribir en archivos
 que no son suyos, y el motor no lo va a impedir si esta declarado.
 
+**Que una tarea termine bien no dice que haya entregado nada.** `ok` significa
+exactamente una cosa: el agente salio limpio. No que su obra funcione, ni que
+exista. **Vitral no ejecuta jamas las pruebas del proyecto**: mira con git que
+archivos se movieron, y ahi se acaba lo que sabe. Verde y entregado no son lo
+mismo, y nada del motor los junta.
+
+Y a `revision` se le puede *pedir* que corra el banco de pruebas —su prompt lo
+dice—, pero eso es una instruccion a un agente, no una verificacion. Un agente
+puede informar de exito sin haberlo corrido, y no hay nada en el sistema que lo
+contradiga.
+
+**Lo que git no puede decirte no es lo que se escondio: es lo que no se
+escribio.** Un archivo que nadie toco se ve exactamente igual que un archivo que
+se dejo intacto a proposito: en las dos situaciones no aparece. Todo el modelo de
+deteccion del motor es "que cambio"; no tiene ninguna nocion de "que tendria que
+haber cambiado y no cambio". Una tarea que no produce nada no deja rastro
+**ninguno**.
+
+Salio de la tanda de los eventos. `checks` preparo su trabajo en dos archivos
+aparte y murio antes de integrarlo: `pruebas/checks.mjs` quedo sin tocar. Git
+enseño los dos archivos sueltos sin problema —no estaban ignorados— y el motor
+hasta los marco como fuera de ruta. **Y aun asi el producto no estaba.** Lo que
+faltaba no era visible en ninguna parte, porque lo que faltaba era una ausencia.
+
+De ahi la regla, y aplica a quien verifica y a lo que se le pide a una revision:
+
+> **La comprobacion de que el producto esta entregado tiene que ser positiva y
+> especifica, y no puede ser "mirar el arbol".**
+
+Nada de "git status esta como esperaba". Una cuenta, un numero, algo que solo
+pueda salir bien si la obra existe: *el banco tiene que decir 40 comprobaciones,
+no 24*. Esa frase caza el fallo; mirar el diff, no.
+
 **Un plomo que no se retira lo paga cada vidrio de cada tanda siguiente.** No es
 una molestia teorica: `preambulo.md` eran 12.972 bytes, y su propia tanda ya
 arrancaba con `plomo 2 archivos (33.1 KB)` en la cabecera de `--seco`, pagados tres
@@ -870,6 +903,163 @@ veces el tope. Sirve como techo de seguridad; como control fino de gasto, no.
 **Cuando el presupuesto corta, no hay handoff.** El agente muere antes de
 escribirlo y deja trabajo a medias en el disco. Vitral registra la marca de corte,
 pero la tarea siguiente se queda sin lo que necesitaba leer.
+
+**Y una tarea de pruebas cortada a la mitad es mas peligrosa que cualquier otra,
+porque su producto sigue ejecutandose.** Un modulo a medias revienta al importarlo
+y se nota enseguida. Un archivo de checks a medias **pasa en verde**: los que
+quedaron escritos corren y dicen `ok`, y los que faltan no dicen nada, porque no
+existen. La suite sigue informando de que todo esta bien. Lo unico que la delata
+es que el numero total de checks bajo, que es justo lo que nadie mira.
+
+En la tanda de los eventos **no llego a pasar**, y el porque no es suerte: el
+agente monto su trabajo en archivos aparte —los bloques transcritos en uno, los
+checks escritos en otro— y murio antes de integrar. `pruebas/checks.mjs` quedo
+intacto y sus 24 checks seguian pasando. El corte se llevo trabajo, no la red.
+
+De ahi salen dos cosas, y las dos son baratas:
+
+- **Al prompt de cualquier tarea que amplie una suite: prepara fuera e integra al
+  final**, en el menor numero de escrituras posible. Convierte un corte en trabajo
+  perdido en vez de en una red rota.
+- **A quien recoge los pedazos: antes de fiarte de un verde, cuenta los checks.**
+  Que pasen todos no significa nada si son menos que ayer.
+
+**Reescribir cuesta mas que escribir, y el tamano del contrato no lo predice.**
+Una tarea que cambia N funciones que ya existen, contra N bloques de salida
+literal que tienen que seguir saliendo igual, gasta mas que una que escribe N
+funciones nuevas del mismo tamano. El trabajo no es teclear: es **localizar cada
+bloque, leerlo, sustituirlo sin tocar lo de al lado, y volver a leerlo para
+comprobar que no se movio nada**. Cada una de esas cuatro cosas es un turno, y los
+turnos son lo que se paga.
+
+Salio de la tanda de los eventos JSON, y las dos tareas de su primera ola se
+cortaron por presupuesto sin dejar handoff:
+
+| Tarea | Que hacia | Tope | Gasto | Turnos | Termino |
+|---|---|---|---|---|---|
+| `emisor` | Anadir una rama a ~16 funciones de `salida.mjs`, sin mover una coma de lo que pintan | $2.5 | $2.5070 | 30 | **no** |
+| `veredictos` | Sacar la sangria de 6 funciones de `guardarrailes.mjs`, contra 17 bloques literales | $1.5 | $1.5448 | 18 | **no** |
+
+La comparacion es la que duele. En la tanda anterior, con contratos de tamano
+parecido pero escribiendo codigo nuevo, **las cuatro tareas terminaron**:
+`agentes` $0.4661 en 5 turnos, `motor` $1.6444 en 22, `documentacion` $1.6303 en
+24, `checks` $1.7968 en 19. Y `emisor`, a 30 turnos y $2.5070, **ya habia pasado a
+`cuadricula`** —$2.5584 en 31 turnos, una tarea de interfaz, que es la clase mas
+cara que hay medida— **y todavia no habia acabado**.
+
+De ahi sale una formula, con un limite que hay que leer pegado a ella:
+
+> **El coste de un vidrio es sus turnos por unos $0.08**, en opus, **mientras la
+> tarea lea mucho y escriba poco.**
+
+Medido sobre las seis tareas de las dos primeras tandas: $0.0836, $0.0858,
+$0.0747, $0.0679, $0.0946 y $0.0825 por turno. **Presupuestar es estimar turnos,
+no estimar dificultad**, y para eso la pregunta util es cuantos sitios distintos
+hay que tocar y cuantas veces hay que releerlos.
+
+### Donde se rompe la formula, y por que
+
+La tanda de los eventos la rompio con un factor de 2.5, y al abrir los logs se ve
+exactamente donde. Las tarifas salen de resolver el sistema con tres tareas y
+cuadran al 0.0% en las otras dos, asi que esto no es estimacion:
+
+| Concepto | $ por millon de tokens |
+|---|---|
+| Salida generada | **$25.00** |
+| Escritura de cache | $10.00 |
+| Lectura de cache | **$0.50** |
+
+**Un token de salida cuesta cincuenta veces uno de contexto releido.** Y lo que
+distingue a una tarea de otra no es cuanto lee —eso es casi constante— sino
+cuanto escribe:
+
+| Tarea | $/turno | Salida/turno | Cache leida/turno | % del coste que es salida |
+|---|---|---|---|---|
+| `checks` | **$0.193** | **3.186** | 87.051 | 41% |
+| `emisor` | $0.119 | 1.620 | 73.446 | 34% |
+| `entrada` | $0.103 | 1.063 | 72.581 | 26% |
+| `veredictos` | $0.079 | 777 | 70.224 | 25% |
+| `documentacion` | $0.078 | 621 | 72.151 | 20% |
+
+**La cache leida por turno es la misma para todas: entre 70.000 y 87.000.** Es el
+suelo que impone el plomo, y vale unos $0.037 por turno haga la tarea lo que haga.
+Lo que se mueve es la salida: de 621 a 3.186 tokens por turno, cinco veces.
+
+**Y hay un segundo termino, mas escondido: lo que el agente va acumulando se le
+vuelve contexto.** Un archivo que crece bajo sus manos entra en el contexto como
+contenido nuevo cada vez que lo relee, y eso se paga a $10/M de **escritura** de
+cache, no a los $0.50 de lectura. Medido: `checks`, que iba amontonando un archivo
+de trabajo hasta 30 KB, escribio **7.014** tokens de cache por turno; `documentacion`,
+editando prosa con bisturi sobre dos archivos que juntos pesaban **mas** que el
+suyo, **2.654**. Casi el triple, con menos archivo.
+
+O sea que **el coste por turno no es constante y no depende del tamano del
+archivo, sino del patron de edicion**: reescribir por partes un archivo grande, o
+irlo construyendo, se paga dos veces —una por escribirlo y otra por releerlo—;
+editar en sitio con cambios pequenos, casi no.
+
+Desglosado, el turno de `checks` frente al de `documentacion`:
+
+| | `checks` | `documentacion` |
+|---|---|---|
+| Lectura de cache | $0.0435 (23%) | $0.0361 (46%) |
+| **Salida generada** | **$0.0797 (41%)** | $0.0155 (20%) |
+| **Escritura de cache** | **$0.0701 (36%)** | $0.0265 (34%) |
+| **Total** | **$0.193** | **$0.078** |
+
+En `checks`, escribir —de las dos maneras— es el **77%** del turno. En
+`documentacion`, el 54%. De donde sale el modelo bueno:
+
+> **coste/turno ≈ $0.037 de suelo + (salida por turno) × $25/M +
+> (contexto nuevo por turno) × $10/M**
+
+Y la pregunta que hay que hacerle a cada tarea al escribir el boceto:
+
+> **¿El trabajo de esta tarea es decidir, o es teclear?**
+
+Una que lee mucho y edita con bisturi —documentacion, una revision— vive en los
+$0.08. Una que tiene que **emitir volumen** se va al doble o mas.
+
+**El caso extremo es copiar.** `checks` era cara justamente por lo que la hacia
+valer: su trabajo era transcribir catorce bloques de salida literal a
+aserciones, caracter a caracter, desde el plomo. Copiar es salida, y la salida es
+el token caro. Si se le hubiera dejado generar los textos esperados **ejecutando
+el motor** habria costado una fraccion —y no habria comprobado nada, porque el
+motor que iba a fotografiar ya llevaba los cambios que tenia que vigilar. **El
+precio y la utilidad venian de la misma decision.**
+
+Regla, entonces: **una tarea a la que el contrato le pide reproducir texto literal
+paga por cada caracter, y hay que presupuestarla por lo que va a escribir, no por
+lo que va a leer.**
+
+**Un tope no es dinero: es un numero de turnos comprados.** Dividelo entre el
+coste por turno **de esa clase de tarea** —$0.08 si lee y edita, el doble si tiene
+que emitir volumen— y tienes cuantos. Esa es la forma de usar la formula al
+escribir el boceto, y es la que convierte un tope en una prediccion comprobable en
+vez de en una cifra redonda.
+
+Y se comprueba sola, hacia atras, con los dos cortes de la tanda de los eventos:
+
+| Tarea | Tope | Turnos que compraba | Turnos que dio |
+|---|---|---|---|
+| `emisor` | $2.5 | 31 | **30** |
+| `veredictos` | $1.5 | 19 | **18** |
+
+Las dos murieron a un turno de lo que su tope pagaba. **No se cortaron por mala
+suerte: se cortaron donde estaba escrito que se cortarian**, y nadie hizo la
+division porque los dos topes se calcularon sin la formula —a ojo, mirando el
+tamano del contrato, que es justo lo que este apartado dice que no predice nada.
+
+De ahi la comprobacion de cinco segundos antes de cerrar un boceto: **por cada
+tarea, divide su tope entre $0.08 y preguntate si le da para el trabajo que le
+estas pidiendo.** Si la respuesta es "justo", el tope esta mal: el tope es el
+techo que evita el corte, no la prevision del gasto.
+
+La regla practica, para una tarea que reescribe con salida literal contratada:
+**cuenta los bloques que tiene que respetar, multiplica por tres turnos, suma lo
+que costaria escribirla de cero, y de ahi saca el tope.** Es una heuristica de una
+sola tanda y esta sin confirmar; lo que si esta medido es que estimarla como si
+fuera codigo nuevo la corta.
 
 ---
 
