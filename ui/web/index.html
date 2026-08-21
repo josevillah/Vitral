@@ -930,9 +930,15 @@
         overflow-wrap: anywhere;
       }
 
-      /* Lo que diga el archivo, tal cual, con sus saltos de linea. Es lo unico que
-         esta interfaz lee de `.vitral/`, y por un milimetro: solo lectura, solo
-         `handoffs/<id>.md` del proyecto activo, y solo al pulsar. */
+      /* Lo que diga el archivo, TAL CUAL, con sus saltos de linea y SIN RENDERIZAR
+         EL MARKDOWN: los `**` y los `#` se ven. Es lo unico que esta interfaz lee de
+         `.vitral/`, y por un milimetro: solo lectura, solo `handoffs/<id>.md` y
+         `handoffs/<id>.INCOMPLETO.md` del proyecto activo, y solo al pulsar.
+
+         Hereda la monoespaciada y el `#cccccc` de `.detalle`, y NO LLEVA ALTO
+         PROPIO: quien recorta es el `overflow: auto` de la celda, que ya esta a
+         `height: 100%`. Asi LA CELDA NO CRECE POR LO QUE TRAIGA EL ARCHIVO -que es
+         lo que romperia la rejilla- ni con los 64 KB que el contrato deja pasar. */
       .detalle .handoff {
         margin: 12px 0 0;
         white-space: pre-wrap;
@@ -942,6 +948,26 @@
       /* Que no haya handoff no es un error, asi que no va en rojo: va apagado. */
       .detalle .handoff.sin {
         color: var(--vacio-texto);
+      }
+
+      /* EL ROTULO DE UNA MARCA DE INCOMPLETO, y no es decoracion. Un
+         `<id>.INCOMPLETO.md` no lo escribio el agente: lo escribio vitral, y lo
+         primero que dice es que no hay handoff. En `error-rejilla`, que es el mismo
+         rojo del error del vidrio, porque las dos son voz de la maquina y no del
+         agente; el cuerpo se queda en `#cccccc` como cualquier handoff, que es lo
+         que hace que el rotulo se lea como encabezado y no como parte del texto. */
+      .detalle .marca-rotulo {
+        margin: 12px 0 0;
+        color: var(--error-rejilla);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      /* Pegado a su texto: rotulo y cuerpo son un solo bloque, y con los 12px de
+         cada uno quedarian tan separados como dos parrafos sueltos. `4px` es el
+         primer paso de la escala de espaciado. */
+      .detalle .marca-rotulo + .handoff {
+        margin-top: 4px;
       }
 
       /* Los estados vacios son cinco situaciones distintas y cada una tiene su

@@ -945,25 +945,78 @@ fn lanzar_corrida(
     Ok(())
 }
 
-/// El handoff de una tarea, si lo dejo escrito.
+/// El tope de un handoff, en **bytes UTF-8**: 64 KB.
+///
+/// Un handoff son dos o tres parrafos por convencion, no por limite. El motor se
+/// queda con todo lo que haya desde el ultimo `## Handoff` hasta el final de la
+/// respuesta, asi que un agente que se enrolle puede dejar cientos de KB que
+/// entrarian enteros en el DOM de la celda. Es un tope contra el accidente, no una
+/// regla de estilo: si alguna vez estorba, se sube aqui y en ningun otro sitio.
+const TOPE_HANDOFF: usize = 64 * 1024;
+
+/// Lo que devuelve `leer_handoff`: **cual de los dos archivos se encontro** y su
+/// texto entero.
+///
+/// El tipo es `"handoff"`, `"incompleto"` o `"nada"`, y el texto es el archivo
+/// entero o la cadena vacia. Que el frontend sepa cual de los dos esta leyendo no
+/// es un detalle: un `<id>.INCOMPLETO.md` no lo escribio el agente, lo escribio
+/// vitral, y la celda le pone su propio rotulo para que no se lea como palabra del
+/// agente lo que es voz de la maquina.
+#[derive(Serialize)]
+struct Handoff {
+    tipo: &'static str,
+    texto: String,
+}
+
+/// Recorta un handoff al tope y lo dice dentro del propio texto.
+///
+/// La cuenta es de **bytes UTF-8, no de caracteres**, y el corte no parte un
+/// caracter por la mitad: se retrocede hasta el limite de caracter anterior. La
+/// ultima linea queda siendo exactamente `[cortado a 64 KB]`, asi que solo se anade
+/// el salto de linea si el recorte no acabo ya en uno.
+fn recortar(mut texto: String) -> String {
+    if texto.len() <= TOPE_HANDOFF {
+        return texto;
+    }
+    let mut corte = TOPE_HANDOFF;
+    while corte > 0 && !texto.is_char_boundary(corte) {
+        corte -= 1;
+    }
+    texto.truncate(corte);
+    if !texto.ends_with('\n') {
+        texto.push('\n');
+    }
+    texto.push_str("[cortado a 64 KB]");
+    texto
+}
+
+/// El handoff de una tarea, o la marca de que se corto sin dejar ninguno.
 ///
 /// LO UNICO QUE ESTA INTERFAZ LEE DE `.vitral/`, y por un milimetro:
-/// `.vitral/handoffs/<id>.md` del proyecto, solo lectura, y solo cuando el frontend
-/// abre la celda de un vidrio. Ni logs, ni boceto, ni historial, ni marcas de
-/// incompleto, y no se enumera nada: se compone una ruta y se lee ese archivo.
+/// `.vitral/handoffs/<id>.md` y `.vitral/handoffs/<id>.INCOMPLETO.md` del proyecto,
+/// solo lectura, y solo cuando el frontend abre la celda de un vidrio. Ni logs, ni
+/// boceto, ni historial, y no se enumera nada: se componen dos rutas y se leen esos
+/// dos archivos. Ni un `readdir`, ni un vigia, ni una cache.
 ///
-/// **Este comando no esta en la tabla del catalogo IPC del plomo de la tanda, y se
-/// anade aqui a proposito.** El plomo manda leer ese archivo al pulsar un vidrio -y
-/// su comprobacion manual numero 11 lo da por hecho-, pero su tabla de comandos solo
-/// trae `lanzar_corrida`, asi que la capacidad estaba contratada y sin ningun canal
-/// por donde pasar. `tauri-plugin-fs` no se usa y no se le da ningun permiso, asi
-/// que desde el frontend no hay otra via. No anade dependencia ni permiso: un
-/// comando propio no lleva entrada en `capabilities/default.json`.
+/// **Quien resuelve cual de los dos hay es este comando, no el frontend.** Seria
+/// tentador decidirlo con el campo `marca` del evento `cierre`, pero eso solo
+/// acertaria durante la corrida: al abrir la ventana al dia siguiente y pulsar un
+/// vidrio no hay ningun evento. Y obligaria a JavaScript a componer rutas, que es
+/// justo lo que los demas comandos evitan.
 ///
-/// Que el archivo no exista es EL CASO NORMAL -una tarea que no dejo handoff-, asi
-/// que eso no es `Err`: devuelve la cadena vacia y la celda dice "sin handoff".
+/// Si estan los dos, **manda el handoff** y la marca no se menciona: `registro.mjs`
+/// borra la marca cuando la tarea termina bien, asi que tener las dos significa un
+/// `--solo` a medias, y el handoff es el estado mas reciente.
+///
+/// Que no exista ninguno es EL CASO NORMAL, asi que eso no es `Err`: devuelve
+/// `tipo: "nada"` y la celda dice "sin handoff". `Err` se reserva para un `id`
+/// invalido y para un fallo de lectura de verdad —permisos, disco, un archivo que
+/// no es UTF-8 valido—, que son cosas distintas de "no hay" y no se confunden.
+///
+/// No anade dependencia ni permiso: un comando propio no lleva entrada en
+/// `capabilities/default.json`.
 #[tauri::command(async)]
-fn leer_handoff(proyecto: String, id: String) -> Result<String, String> {
+fn leer_handoff(proyecto: String, id: String) -> Result<Handoff, String> {
     // El id viene del flujo del motor, no de la persona, pero compone una ruta: un
     // separador o un `:` dentro lo sacarian del directorio de handoffs, y de ahi a
     // leer cualquier archivo del disco hay un paso. Sin separadores, `<id>.md` es
@@ -972,16 +1025,32 @@ fn leer_handoff(proyecto: String, id: String) -> Result<String, String> {
         return Err(format!("id de tarea invalido: \"{id}\""));
     }
 
-    let ruta = Path::new(&normalizar(&proyecto))
+    let carpeta = Path::new(&normalizar(&proyecto))
         .join(".vitral")
-        .join("handoffs")
-        .join(format!("{id}.md"));
+        .join("handoffs");
 
-    match std::fs::read_to_string(&ruta) {
-        Ok(texto) => Ok(texto),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(format!("no se pudo leer el handoff de \"{id}\": {e}")),
+    // En este orden, y el orden es el contrato: el handoff manda sobre la marca.
+    for (tipo, nombre) in [
+        ("handoff", format!("{id}.md")),
+        ("incompleto", format!("{id}.INCOMPLETO.md")),
+    ] {
+        match std::fs::read_to_string(carpeta.join(nombre)) {
+            Ok(texto) => {
+                return Ok(Handoff {
+                    tipo,
+                    texto: recortar(texto),
+                })
+            }
+            // Que este no este solo dice que hay que mirar el siguiente.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("no se pudo leer el handoff de \"{id}\": {e}")),
+        }
     }
+
+    Ok(Handoff {
+        tipo: "nada",
+        texto: String::new(),
+    })
 }
 
 /// Los proyectos con una corrida en marcha: la lista entera, para el latido.

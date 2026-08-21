@@ -80,6 +80,27 @@ const AISLA_FIN = '\u2069';
 // no va en rojo: va apagado, en `vacio-texto`.
 const SIN_HANDOFF = '\u2014 sin handoff \u2014';
 
+// EL ROTULO DE UNA MARCA DE INCOMPLETO, literal del contrato y copiado caracter a
+// caracter. NO ES DECORACION, y por eso es una constante y no una cadena suelta
+// dentro del pintado: un `<id>.INCOMPLETO.md` no lo escribio el agente, lo escribio
+// vitral, y lo primero que dice es que NO HAY handoff. Pintarlo igual que un handoff
+// haria que se leyera como palabra del agente lo que es voz de la maquina, y lo que
+// se pierde ahi no es estetica: es saber si alguien decidio algo o si nadie llego a
+// decidir nada.
+//
+// Es la misma regla que el motor ya sigue al inyectar un handoff ausente en un
+// prompt: `prompt.mjs` no lo mete callando, le pone encabezado propio y voz de
+// sistema. La ventana hace lo mismo para la persona que mira.
+const ROTULO_MARCA =
+  '\u2014 esta tarea se corto y no dejo handoff. Lo de abajo lo escribio vitral \u2014';
+
+// Lo que se pinta si `leer_handoff` responde algo que no es ninguno de los tres
+// tipos del contrato. VA EN ROJO Y NO EN "SIN HANDOFF" A PROPOSITO: el fallo mas
+// caro de este repositorio fue justo ese, un rechazo que se trago un `catch` y una
+// celda que decia "sin handoff" siempre, que es indistinguible de una tarea que no
+// dejo ninguno. Una respuesta que no se entiende es un fallo y se ve como un fallo.
+const RESPUESTA_RARA = 'no se entendio la respuesta de leer_handoff';
+
 // Los siete estados de un vidrio, y LA CLASE CSS DE SU FORMA. La tabla del contrato
 // es el origen unico de los estados; esta solo los traduce a una clase.
 //
@@ -413,11 +434,16 @@ class Detalle {
     this.id = id;
     this.celda = celda;
     this.cerrado = false;
-    /// El texto del handoff. `undefined` mientras se lee, `null` si no hay, y la
-    /// cadena entera si lo hay. Se lee UNA VEZ, al abrir la celda: el contrato dice
-    /// "solo lectura, y solo al pulsar un vidrio", y "se lee al abrir la celda, no
-    /// antes". Ni se precarga al terminar una tarea ni se vuelve a mirar en cada
-    /// repintado, que serian las dos formas de convertir esto en vigilar `.vitral/`.
+    /// Lo que devolvio `leer_handoff`: `undefined` mientras se lee, y despues
+    /// `{ tipo, texto }` con `tipo` en `handoff`, `incompleto`, `nada` o `error`.
+    /// Los tres primeros son los del contrato; `error` es local y es lo que hace que
+    /// UN FALLO DE LECTURA DE VERDAD NO SE CONFUNDA CON "NO HAY", que es el borde
+    /// que se colaba solo cuando esto era una cadena y el `catch` los igualaba.
+    ///
+    /// Se lee UNA VEZ, al abrir la celda: el contrato dice "solo lectura, y solo al
+    /// pulsar un vidrio", y "se lee al abrir la celda, no antes". Ni se precarga al
+    /// terminar una tarea ni se vuelve a mirar en cada repintado, que serian las dos
+    /// formas de convertir esto en vigilar `.vitral/`.
     this.handoff = undefined;
     /// Lo ultimo que se pinto, para poder repintar sin que el que llama tenga que
     /// volver a buscarlo.
@@ -435,21 +461,33 @@ class Detalle {
   }
 
   /// LO UNICO QUE ESTA INTERFAZ LEE DE `.vitral/`, y por un milimetro:
-  /// `handoffs/<id>.md` del proyecto activo, solo lectura. Ni logs, ni boceto, ni
-  /// historial, ni marcas de incompleto.
+  /// `handoffs/<id>.md` y `handoffs/<id>.INCOMPLETO.md` del proyecto activo, solo
+  /// lectura y solo al pulsar. Ni logs, ni boceto, ni historial.
   ///
-  /// Si no se puede leer, la celda dice "sin handoff" y no es un error: el caso
-  /// normal es justo ese, una tarea que no dejo ninguno. La contrapartida, dicha
-  /// para que no se lea como un olvido: un fallo de lectura de verdad se ve igual
-  /// que un archivo que no existe.
+  /// QUIEN RESUELVE CUAL DE LOS DOS ARCHIVOS HAY ES RUST, y aqui no se compone
+  /// ninguna ruta. No es comodidad: el evento que termina una tarea trae la ruta de
+  /// la marca, y seria tentador decidir con ella, pero eso solo acertaria durante la
+  /// corrida: al abrir la ventana al dia siguiente y pulsar un vidrio no hay ninguno.
+  ///
+  /// Que no exista ninguno de los dos NO ES UN ERROR: es el caso normal, y sale
+  /// como `nada`. Un fallo de lectura de verdad -permisos, disco, `id` invalido- si
+  /// lo es, y se pinta como tal: los dos dejaron de verse igual.
   async leerHandoff() {
+    let leido;
     try {
-      const contenido = await invoke('leer_handoff', { proyecto: this.ruta, id: this.id });
-      this.handoff = typeof contenido === 'string' && contenido.length > 0 ? contenido : null;
-    } catch {
-      this.handoff = null;
+      leido = respuestaHandoff(
+        await invoke('leer_handoff', { proyecto: this.ruta, id: this.id }),
+      );
+    } catch (fallo) {
+      leido = { tipo: 'error', texto: causaDeFallo(fallo) };
     }
-    if (!this.cerrado) this.pintar(this.vidrio);
+
+    // La celda se pudo cerrar mientras se leia. LA RESPUESTA SE DESCARTA: nada de
+    // pintar sobre lo que ya no esta.
+    if (this.cerrado) return;
+
+    this.handoff = leido;
+    this.pintar(this.vidrio);
   }
 
   /// Repinta con el vidrio que llega, entero. No se guarda una copia propia que
@@ -500,12 +538,55 @@ class Detalle {
 
     // Y el handoff, lo ultimo. Mientras se lee no se escribe nada: poner "sin
     // handoff" para quitarlo medio segundo despues es peor que un hueco.
-    if (this.handoff !== undefined) {
-      const traspaso = document.createElement('p');
-      traspaso.className = this.handoff === null ? 'handoff sin' : 'handoff';
-      traspaso.textContent = this.handoff === null ? SIN_HANDOFF : this.handoff;
-      this.caja.append(traspaso);
+    if (this.handoff !== undefined) this.pintarHandoff(this.handoff);
+  }
+
+  /// Los cuatro finales de `leer_handoff`, y CADA UNO SE VE DISTINTO DE LOS DEMAS.
+  ///
+  /// El texto va TAL CUAL, en la monoespaciada de la celda y SIN RENDERIZAR EL
+  /// MARKDOWN: los `**` y los `#` se ven. No se vendoriza ningun parser -son tres
+  /// parrafos, y el contrato permanente no anade dependencias a la ligera- ni se
+  /// escriben reemplazos a mano, que es la version casera del mismo error. Lo pone
+  /// `textContent`, que ademas es lo que impide que un handoff con un `<script>`
+  /// dentro sea otra cosa que texto.
+  pintarHandoff({ tipo, texto: cuerpo }) {
+    if (tipo === 'nada') {
+      // No hay ninguno de los dos archivos, que es el caso normal. Apagado y no en
+      // rojo: no es un error.
+      const vacio = document.createElement('p');
+      vacio.className = 'handoff sin';
+      vacio.textContent = SIN_HANDOFF;
+      this.caja.append(vacio);
+      return;
     }
+
+    if (tipo === 'error') {
+      // Un fallo de lectura DE VERDAD -permisos, disco, un `id` invalido-. Se pinta
+      // como cualquier otro error de la celda y NO como "no hay": son cosas
+      // distintas y verlas iguales fue lo que costo media funcionalidad.
+      const yerro = document.createElement('p');
+      yerro.className = 'yerro';
+      yerro.textContent = cuerpo;
+      this.caja.append(yerro);
+      return;
+    }
+
+    // `incompleto`: el rotulo VA ENCIMA del texto, en `error-rejilla`, y no
+    // sustituye al titulo de la celda, que sigue siendo `<id> · <estado>` en
+    // `#fde047` porque el estado ya lo trae el vidrio.
+    if (tipo === 'incompleto') {
+      const rotulo = document.createElement('p');
+      rotulo.className = 'marca-rotulo';
+      rotulo.textContent = ROTULO_MARCA;
+      this.caja.append(rotulo);
+    }
+
+    // Y el cuerpo, IGUAL en los dos casos: un incompleto no se pinta en otro color
+    // ni recortado. Lo que cambia es quien lo firma, y eso lo dice el rotulo.
+    const traspaso = document.createElement('p');
+    traspaso.className = 'handoff';
+    traspaso.textContent = cuerpo;
+    this.caja.append(traspaso);
   }
 
   /// Un vidrio no tiene PTY: no hay filas ni columnas que mandarle a nadie.
@@ -518,6 +599,36 @@ class Detalle {
   cerrar() {
     this.cerrado = true;
   }
+}
+
+/// Lo que devolvio `leer_handoff`, comprobado antes de pintarlo. El contrato dice
+/// `{ tipo, texto }` con `tipo` en `handoff`, `incompleto` o `nada`, y esto no
+/// admite nada mas.
+///
+/// LO QUE NO SE ENTIENDE SALE COMO ERROR Y NO COMO "NO HAY", y es deliberado: el
+/// fallo mas caro de este repositorio fue una celda que decia "sin handoff" siempre
+/// porque nadie habia escrito el comando, y eso es indistinguible de una tarea que
+/// no dejo ninguno. Cualquier desajuste futuro entre este archivo y Rust se ve en
+/// la ventana en vez de esconderse debajo del caso normal.
+function respuestaHandoff(respuesta) {
+  if (respuesta !== null && typeof respuesta === 'object') {
+    const { tipo, texto: cuerpo } = respuesta;
+    if (tipo === 'nada') return { tipo, texto: '' };
+    if (tipo === 'handoff' || tipo === 'incompleto') {
+      return { tipo, texto: typeof cuerpo === 'string' ? cuerpo : '' };
+    }
+  }
+  return { tipo: 'error', texto: RESPUESTA_RARA };
+}
+
+/// El mensaje de un rechazo de `invoke`, listo para pintar. Tauri rechaza con el
+/// `String` del `Result`, que ya viene en espanol, corto y en minuscula: se ensena
+/// tal cual. Lo demas es defensa, porque un error sin texto seria una linea roja
+/// vacia, y eso vuelve a ser un fallo que no se ve.
+function causaDeFallo(fallo) {
+  if (typeof fallo === 'string' && fallo.length > 0) return fallo;
+  if (fallo instanceof Error && fallo.message.length > 0) return fallo.message;
+  return RESPUESTA_RARA;
 }
 
 /// Un valor del vidrio, listo para pintar. Un dato ausente es un guion y no un
