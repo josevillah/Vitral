@@ -202,6 +202,11 @@ mintiendo dentro del prompt de todos.
 - Los campos que ya se normalizaban.
 - `.vitral/boceto.json`, `.vitral/ui/`, `ejemplo/`, `README.md`. El README habla del
   modo json en prosa corta y no baja a este nivel.
+
+  El boceto de **esta** tanda es el primero que declara `plomos`, y lo hace a
+  proposito: `normalizar` no recibe `plomos-en-el-boceto.md` porque no lo necesita
+  para nada. Si te extrana no tenerlo delante, no es un olvido. Y aun asi ningun
+  agente edita ningun boceto.
 - `ui/` entera.
 - Los 50 checks que ya existen.
 
